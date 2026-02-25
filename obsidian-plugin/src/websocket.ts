@@ -4,7 +4,11 @@
  * Pivot (2026-02-25): Do NOT use custom obsidian.* gateway methods.
  * Those require operator.admin scope which is not granted to external clients.
  *
- * Instead we use built-in gateway methods/events:
+ * Auth note:
+ * - chat.send requires operator.write
+ * - external clients must present a paired device identity to receive write scopes
+ *
+ * We use built-in gateway methods/events:
  * - Send: chat.send({ sessionKey, message, idempotencyKey, ... })
  * - Receive: event "chat" (filter by sessionKey)
  */
@@ -21,6 +25,62 @@ export type WSClientState = 'disconnected' | 'connecting' | 'handshaking' | 'con
 interface PendingRequest {
   resolve: (payload: any) => void;
   reject: (error: any) => void;
+}
+
+type DeviceIdentity = {
+  id: string;
+  publicKey: string; // base64
+  privateKeyJwk: JsonWebKey;
+};
+
+const DEVICE_STORAGE_KEY = 'openclawChat.deviceIdentity.v1';
+
+function base64Encode(bytes: ArrayBuffer): string {
+  const u8 = new Uint8Array(bytes);
+  let s = '';
+  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+  return btoa(s);
+}
+
+function utf8Bytes(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
+async function loadOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
+  const existing = localStorage.getItem(DEVICE_STORAGE_KEY);
+  if (existing) {
+    const parsed = JSON.parse(existing) as DeviceIdentity;
+    if (parsed?.id && parsed?.publicKey && parsed?.privateKeyJwk) return parsed;
+  }
+
+  const keyPair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+  const pubRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
+  const privJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+
+  const id = `obsidian-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const identity: DeviceIdentity = {
+    id,
+    publicKey: base64Encode(pubRaw),
+    privateKeyJwk: privJwk,
+  };
+
+  localStorage.setItem(DEVICE_STORAGE_KEY, JSON.stringify(identity));
+  return identity;
+}
+
+async function signNonce(identity: DeviceIdentity, nonce: string): Promise<{ signature: string; signedAt: number }> {
+  const privateKey = await crypto.subtle.importKey(
+    'jwk',
+    identity.privateKeyJwk,
+    { name: 'Ed25519' },
+    false,
+    ['sign'],
+  );
+
+  const signedAt = Date.now();
+  // Signature is over the nonce bytes (server-provided)
+  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, utf8Bytes(nonce));
+  return { signature: base64Encode(sig), signedAt };
 }
 
 function extractTextFromGatewayMessage(msg: any): string {
@@ -112,20 +172,36 @@ export class ObsidianWSClient {
     const ws = new WebSocket(this.url);
     this.ws = ws;
 
-    ws.onopen = async () => {
-      this._setState('handshaking');
+    let connectNonce: string | null = null;
+    let connectStarted = false;
+
+    const tryConnect = async () => {
+      if (connectStarted) return;
+      if (!connectNonce) return;
+      connectStarted = true;
+
       try {
+        const identity = await loadOrCreateDeviceIdentity();
+        const sig = await signNonce(identity, connectNonce);
+
         await this._sendRequest('connect', {
           minProtocol: 3,
           maxProtocol: 3,
           client: {
             id: 'gateway-client',
             mode: 'backend',
-            version: '0.1.8',
+            version: '0.1.9',
             platform: 'electron',
           },
           role: 'operator',
-          scopes: ['operator.write'],
+          scopes: ['operator.read', 'operator.write'],
+          device: {
+            id: identity.id,
+            publicKey: identity.publicKey,
+            signature: sig.signature,
+            signedAt: sig.signedAt,
+            nonce: connectNonce,
+          },
           auth: {
             token: this.token,
           },
@@ -137,6 +213,11 @@ export class ObsidianWSClient {
         console.error('[oclaw-ws] Connect handshake failed', err);
         ws.close();
       }
+    };
+
+    ws.onopen = () => {
+      this._setState('handshaking');
+      // The gateway will send connect.challenge; connect is sent once we have a nonce.
     };
 
     ws.onmessage = (event: MessageEvent) => {
@@ -161,6 +242,13 @@ export class ObsidianWSClient {
 
       // Events
       if (frame.type === 'event') {
+        if (frame.event === 'connect.challenge') {
+          connectNonce = frame.payload?.nonce || null;
+          // Attempt handshake once we have a nonce.
+          void tryConnect();
+          return;
+        }
+
         if (frame.event === 'chat') {
           const payload = frame.payload;
           if (payload?.sessionKey !== this.sessionKey) {
