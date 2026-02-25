@@ -105,9 +105,11 @@ export class ObsidianWSClient {
             // Use non-Control-UI client id to avoid Control UI origin restrictions
             id: 'gateway-client',
             mode: 'backend',
-            version: '0.1.3',
+            version: '0.1.5',
             platform: 'electron',
           },
+          // Request required scope for custom gateway methods
+          scopes: ['operator.admin'],
           auth: {
             token: this.token,
           },
