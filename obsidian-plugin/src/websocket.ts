@@ -108,7 +108,8 @@ export class ObsidianWSClient {
             version: '0.1.5',
             platform: 'electron',
           },
-          // Request required scope for custom gateway methods
+          // Request elevated operator scope for custom gateway methods
+          role: 'operator',
           scopes: ['operator.admin'],
           auth: {
             token: this.token,
