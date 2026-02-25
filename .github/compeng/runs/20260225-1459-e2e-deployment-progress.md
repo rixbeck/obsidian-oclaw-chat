@@ -331,3 +331,88 @@ main.js  68.5kb
 **Protocol:** ✅ JSON-RPC style requests + event push
 
 **Next:** Deploy Obsidian plugin to Eve-1 vault, test E2E (connect → subscribe → send → receive push).
+
+---
+
+### 10. Critical Fix: Gateway Handshake Protocol (18:36-18:55)
+
+**Problem identified (from Rix console logs):**
+```json
+Request: {"type":"req","method":"obsidian.subscribe",...}
+Response: {"type":"res","ok":false,"error":{"code":"INVALID_REQUEST","message":"invalid handshake: first request must be connect"}}
+```
+
+**Root cause:**
+- WebSocket client was calling `obsidian.subscribe` immediately after connection
+- Gateway protocol **requires** `connect` handshake first
+
+**Fix applied** (`websocket.ts`):
+
+**Before:**
+```typescript
+ws.onopen = async () => {
+  // Directly call subscribe (WRONG)
+  await this._sendRequest('obsidian.subscribe', { ... });
+}
+```
+
+**After:**
+```typescript
+ws.onopen = async () => {
+  this._setState('handshaking');
+  
+  // Step 1: Connect handshake (REQUIRED)
+  await this._sendRequest('connect', {
+    minProtocol: 1,
+    maxProtocol: 1,
+    client: {
+      id: 'webchat-ui',
+      mode: 'ui',
+      version: '0.1.0',
+      platform: 'electron',
+    },
+    auth: {
+      token: this.token,
+    },
+  });
+
+  // Step 2: Subscribe (AFTER connect OK)
+  this._setState('subscribing');
+  const result = await this._sendRequest('obsidian.subscribe', {
+    token: this.token,
+    sessionKey: this.sessionKey,
+    accountId: this.accountId,
+  });
+  
+  if (result?.subscriptionId) {
+    this.subscriptionId = result.subscriptionId;
+    this._setState('connected');
+  }
+}
+```
+
+**Changes:**
+- Added `handshaking` state
+- Two-step connection: `connect` → `obsidian.subscribe`
+- Ignore `connect.challenge` events (handled internally by Gateway)
+
+**Build + deploy:**
+- Build: `70.0kb` ✅
+- Deployed to Eve-1: `~/obsidian-plugin-openclaw-chat/main.js`
+- Commit: `9e0d98c`
+- GitHub: pushed to `develop`
+
+**Next:** Test E2E (Obsidian reload → connect → send message → receive push)
+
+---
+
+## Updated Status (18:55)
+
+**WebSocket client:** ✅ Gateway handshake protocol implemented  
+**Build:** ✅ 70.0kb, deployed to Eve-1  
+**Git:** ✅ Commit `9e0d98c` pushed to develop
+
+**Required action (Eve-1):**
+- Copy updated `main.js` to vault plugin directory
+- Reload Obsidian (Ctrl+R) or close/open chat sidebar
+- Test: connect → status dot green → send message
