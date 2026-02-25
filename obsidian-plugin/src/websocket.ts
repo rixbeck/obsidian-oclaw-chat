@@ -46,6 +46,11 @@ function utf8Bytes(text: string): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
+async function sha256Base64(bytes: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return base64Encode(digest);
+}
+
 async function loadOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
   const existing = localStorage.getItem(DEVICE_STORAGE_KEY);
   if (existing) {
@@ -57,7 +62,11 @@ async function loadOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
   const pubRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
   const privJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
 
-  const id = `obsidian-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  // IMPORTANT: device.id must be a stable fingerprint for the public key.
+  // The gateway enforces deviceId ↔ publicKey binding; random ids can cause "device identity mismatch".
+  const fingerprint = await sha256Base64(pubRaw);
+  const id = `obsidian:${fingerprint}`;
+
   const identity: DeviceIdentity = {
     id,
     publicKey: base64Encode(pubRaw),
