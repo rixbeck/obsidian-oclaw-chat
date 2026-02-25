@@ -1,150 +1,39 @@
 # obsidian-oclaw-chat
 
-**Bidirectional chat integration between Obsidian and OpenClaw.**
+Bidirectional chat integration between **Obsidian** and **OpenClaw Gateway**.
 
-## Architecture
+## Components
 
-**Two-layer plugin system:**
+- **OpenClaw channel extension**: `channel-plugin/`
+  - README: `channel-plugin/README.md`
+- **Obsidian community plugin**: `obsidian-plugin/`
+  - README: `obsidian-plugin/README.md`
 
-1. **OpenClaw Channel Plugin** (`channel-plugin/`)
-   - Runs inside OpenClaw Gateway
-   - Provides gateway methods: `obsidian.subscribe`, `obsidian.send`, `obsidian.unsubscribe`
-   - Session-scoped push via `before_message_write` hook
-   - No custom WebSocket server (uses Gateway WS directly)
+## Current architecture (important)
 
-2. **Obsidian Community Plugin** (`obsidian-plugin/`)
-   - Runs inside Obsidian
-   - Connects to OpenClaw Gateway WebSocket (e.g. `ws://100.90.9.68:18789`)
-   - Uses Gateway protocol: JSON-RPC style requests + event push
-   - Sidebar chat panel with assistant message streaming
+The Obsidian client plugin uses the **built-in Gateway protocol**:
+- handshake: `connect` (protocol v3) + device-auth
+- send: `chat.send`
+- receive: gateway `event: "chat"` (render final-only)
 
-## Setup
+The `obsidian.*` gateway methods exist in the channel plugin, but the client does not rely on them.
 
-### 1. OpenClaw Channel Plugin
+## Recommended secure remote access (tailnet)
 
-**Install:**
-```bash
-# Copy to OpenClaw extensions directory
-cp -r channel-plugin/dist ~/.openclaw/extensions/openclaw-channel-obsidian/
-```
+Use **Tailscale Serve** (TLS termination) instead of direct plaintext `ws://<tailnet-ip>:18789`:
 
-**Config** (`~/.openclaw/openclaw.json`):
-```json
-{
-  "channels": {
-    "obsidian": {
-      "enabled": true,
-      "authToken": "your-secret-token-here",
-      "accounts": ["main"]
-    }
-  }
-}
-```
+- Gateway binds to loopback: `127.0.0.1:18789`
+- Tailscale Serve exposes:
+  - Web UI: `https://<host>.tailnet.ts.net/`
+  - WebSocket: `wss://<host>.tailnet.ts.net/` (**no port**, implicit 443)
 
-**Gateway must listen on tailnet or LAN** (not just loopback):
-```json
-{
-  "gateway": {
-    "bind": "tailnet"
-  }
-}
-```
+## Quick links (CompEng)
 
-### 2. Obsidian Plugin
-
-**Install:**
-```bash
-# Copy to Obsidian vault plugins directory
-cp -r obsidian-plugin/* /path/to/vault/.obsidian/plugins/openclaw-chat/
-```
-
-**Enable in Obsidian:**
-- Settings → Community plugins → Enable "OpenClaw Chat"
-
-**Configure:**
-- Gateway URL: `ws://your-gateway-host:18789` (e.g. `ws://100.90.9.68:18789`)
-- Auth Token: (same as channel plugin config)
-- Session Key: `main` (or your target OpenClaw session)
-- Account ID: `main`
-
-## Protocol
-
-**Gateway methods (JSON-RPC style):**
-
-**Subscribe:**
-```json
-{
-  "type": "req",
-  "method": "obsidian.subscribe",
-  "id": "sub-1",
-  "params": {
-    "token": "your-token",
-    "sessionKey": "main",
-    "accountId": "main"
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "type": "res",
-  "id": "sub-1",
-  "ok": true,
-  "payload": {
-    "subscriptionId": "obsidian-123456-abc",
-    "sessionKey": "main",
-    "accountId": "main"
-  }
-}
-```
-
-**Send message:**
-```json
-{
-  "type": "req",
-  "method": "obsidian.send",
-  "id": "msg-1",
-  "params": {
-    "subscriptionId": "obsidian-123456-abc",
-    "message": "Hello from Obsidian!"
-  }
-}
-```
-
-**Push event (assistant message):**
-```json
-{
-  "type": "event",
-  "event": "obsidian.message",
-  "payload": {
-    "role": "assistant",
-    "content": "Hello from OpenClaw!",
-    "timestamp": 1708876543210
-  }
-}
-```
-
-## Development
-
-**Build channel plugin:**
-```bash
-cd channel-plugin
-npm install
-npm run build
-```
-
-**Build Obsidian plugin:**
-```bash
-cd obsidian-plugin
-npm install
-npm run build
-```
-
-## Testing
-
-**E2E deployment plan:** `.github/compeng/plans/20260225-1440-e2e-obsidian-channel-eve1-deployment.md`  
-**Run log:** `.github/compeng/runs/20260225-1459-e2e-deployment-progress.md`
+- E2E deployment plan: `.github/compeng/plans/20260225-1440-e2e-obsidian-channel-eve1-deployment.md`
+- Run log: `.github/compeng/runs/20260225-1459-e2e-deployment-progress.md`
+- Reviews:
+  - `compeng/reviews/20260225-2146-obsidian-oclaw-chat.md`
+  - `compeng/reviews/20260225-2336-obsidian-oclaw-chat-followup.md`
 
 ## License
 
