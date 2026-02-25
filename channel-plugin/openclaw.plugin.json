@@ -1,5 +1,6 @@
 {
   "id": "openclaw-channel-obsidian",
+  "channels": ["obsidian"],
   "name": "OpenClaw Channel - Obsidian",
   "description": "Bidirectional communication channel for Obsidian (WebSocket + RPC)",
   "version": "0.1.0",
