@@ -3,8 +3,14 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
-import { getObsidianRuntime } from './runtime.js';
 import { validateToken } from './auth.js';
+
+type Logger = {
+  debug?: (message: string, meta?: any) => void;
+  info?: (message: string, meta?: any) => void;
+  warn?: (message: string, meta?: any) => void;
+  error?: (message: string, meta?: any) => void;
+};
 
 interface ObsidianConfig {
   wsPort: number;
@@ -27,13 +33,12 @@ interface WSMessage {
 const activeSessions = new Map<string, SessionInfo>();
 let wsServer: WebSocketServer | null = null;
 
-export function startWebSocketService(config: ObsidianConfig) {
-  const runtime = getObsidianRuntime();
-  const log = runtime.logging.getChildLogger({ plugin: "openclaw-channel-obsidian", component: "ws" });
+export function startWebSocketService(config: ObsidianConfig, logger: Logger) {
+  const log = logger;
 
   // Prevent double-start
   if (wsServer) {
-    log.warn('[obsidian-channel] WebSocket server already running');
+    log.warn?.('[obsidian-channel] WebSocket server already running');
     return;
   }
 
@@ -41,7 +46,7 @@ export function startWebSocketService(config: ObsidianConfig) {
   wsServer = wss;
 
   wss.on('listening', () => {
-    log.info(`[obsidian-channel] WebSocket server listening on port ${config.wsPort}`);
+    log.info?.(`[obsidian-channel] WebSocket server listening on port ${config.wsPort}`);
   });
 
   wss.on('connection', (ws: WebSocket, req) => {
@@ -79,7 +84,7 @@ export function startWebSocketService(config: ObsidianConfig) {
             payload: { success: true, sessionId: sessionInfo.sessionId } 
           }));
           
-          log.info('[obsidian-channel] Client authenticated', { 
+          log.info?.('[obsidian-channel] Client authenticated', { 
             sessionId: sessionInfo.sessionId,
             agentId: sessionInfo.agentId
           });
@@ -93,10 +98,10 @@ export function startWebSocketService(config: ObsidianConfig) {
         }
 
         // Handle other message types
-        await handleMessage(message, sessionInfo);
+        await handleMessage(message, sessionInfo, logger);
 
       } catch (error) {
-        log.error('[obsidian-channel] Error processing message', { error });
+        log.error?.('[obsidian-channel] Error processing message', { error });
         ws.send(JSON.stringify({ type: 'error', payload: { message: 'Message processing failed' } }));
       }
     });
@@ -104,23 +109,22 @@ export function startWebSocketService(config: ObsidianConfig) {
     ws.on('close', () => {
       if (sessionInfo) {
         activeSessions.delete(sessionInfo.sessionId);
-        log.info('[obsidian-channel] Client disconnected', { sessionId: sessionInfo.sessionId });
+        log.info?.('[obsidian-channel] Client disconnected', { sessionId: sessionInfo.sessionId });
       }
     });
 
     ws.on('error', (error) => {
-      log.error('[obsidian-channel] WebSocket error', { error, clientId });
+      log.error?.('[obsidian-channel] WebSocket error', { error, clientId });
     });
   });
 
   wss.on('error', (error) => {
-    log.error('[obsidian-channel] WebSocket server error', { error });
+    log.error?.('[obsidian-channel] WebSocket server error', { error });
   });
 }
 
-async function handleMessage(message: WSMessage, sessionInfo: SessionInfo) {
-  const runtime = getObsidianRuntime();
-  const log = runtime.logging.getChildLogger({ plugin: "openclaw-channel-obsidian", component: "ws" });
+async function handleMessage(message: WSMessage, sessionInfo: SessionInfo, logger: Logger) {
+  const log = logger;
 
   switch (message.type) {
     case 'message':
@@ -147,7 +151,7 @@ async function handleMessage(message: WSMessage, sessionInfo: SessionInfo) {
       break;
 
     default:
-      log.warn('[obsidian-channel] Unknown message type', { type: message.type });
+      log.warn?.('[obsidian-channel] Unknown message type', { type: message.type });
   }
 }
 
