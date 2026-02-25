@@ -3,20 +3,45 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
-import type { PluginContext, SessionInfo, WSMessage } from './types.js';
+import { getObsidianRuntime } from './runtime.js';
 import { validateToken } from './auth.js';
-import { routeToSession } from './session.js';
+
+interface ObsidianConfig {
+  wsPort: number;
+  authToken: string;
+  accounts: string[];
+}
+
+interface SessionInfo {
+  sessionId: string;
+  agentId: string;
+  wsClient: WebSocket;
+  authenticated: boolean;
+}
+
+interface WSMessage {
+  type: string;
+  payload?: any;
+}
 
 const activeSessions = new Map<string, SessionInfo>();
+let wsServer: WebSocketServer | null = null;
 
-export function startWebSocketService(ctx: PluginContext) {
-  const { log, config } = ctx;
-  const { wsPort } = config;
+export function startWebSocketService(config: ObsidianConfig) {
+  const runtime = getObsidianRuntime();
+  const { log } = runtime;
 
-  const wss = new WebSocketServer({ host: '127.0.0.1', port: wsPort });
+  // Prevent double-start
+  if (wsServer) {
+    log.warn('[obsidian-channel] WebSocket server already running');
+    return;
+  }
+
+  const wss = new WebSocketServer({ host: '127.0.0.1', port: config.wsPort });
+  wsServer = wss;
 
   wss.on('listening', () => {
-    log.info(`[obsidian-channel] WebSocket server listening on port ${wsPort}`);
+    log.info(`[obsidian-channel] WebSocket server listening on port ${config.wsPort}`);
   });
 
   wss.on('connection', (ws: WebSocket, req) => {
@@ -29,7 +54,7 @@ export function startWebSocketService(ctx: PluginContext) {
       try {
         const message: WSMessage = JSON.parse(data.toString());
         
-        // Handle authentication first
+        // Handle authentication
         if (message.type === 'auth') {
           const isValid = validateToken(message.payload?.token, config.authToken);
           
@@ -39,7 +64,7 @@ export function startWebSocketService(ctx: PluginContext) {
             return;
           }
 
-          // Always use the server-generated clientId — never trust client-supplied sessionId
+          // Server-generated sessionId (never trust client)
           sessionInfo = {
             sessionId: clientId,
             agentId: message.payload?.agentId || 'main',
@@ -49,7 +74,11 @@ export function startWebSocketService(ctx: PluginContext) {
 
           activeSessions.set(sessionInfo.sessionId, sessionInfo);
           
-          ws.send(JSON.stringify({ type: 'auth', payload: { success: true, sessionId: sessionInfo.sessionId } }));
+          ws.send(JSON.stringify({ 
+            type: 'auth', 
+            payload: { success: true, sessionId: sessionInfo.sessionId } 
+          }));
+          
           log.info('[obsidian-channel] Client authenticated', { 
             sessionId: sessionInfo.sessionId,
             agentId: sessionInfo.agentId
@@ -57,14 +86,14 @@ export function startWebSocketService(ctx: PluginContext) {
           return;
         }
 
-        // Require authentication for other message types
+        // Require authentication for other messages
         if (!sessionInfo?.authenticated) {
           ws.send(JSON.stringify({ type: 'error', payload: { message: 'Not authenticated' } }));
           return;
         }
 
         // Handle other message types
-        await handleMessage(message, sessionInfo, ctx);
+        await handleMessage(message, sessionInfo);
 
       } catch (error) {
         log.error('[obsidian-channel] Error processing message', { error });
@@ -87,17 +116,30 @@ export function startWebSocketService(ctx: PluginContext) {
   wss.on('error', (error) => {
     log.error('[obsidian-channel] WebSocket server error', { error });
   });
-
-  return wss;
 }
 
-async function handleMessage(message: WSMessage, sessionInfo: SessionInfo, ctx: PluginContext) {
-  const { log } = ctx;
+async function handleMessage(message: WSMessage, sessionInfo: SessionInfo) {
+  const runtime = getObsidianRuntime();
+  const { log } = runtime;
 
   switch (message.type) {
     case 'message':
       // Route message to agent session
-      await routeToSession(message, sessionInfo, ctx);
+      // TODO: implement routing to OpenClaw session
+      log.info('[obsidian-channel] Message from client', {
+        sessionId: sessionInfo.sessionId,
+        agentId: sessionInfo.agentId,
+        messagePreview: message.payload?.message?.substring(0, 100),
+      });
+      
+      // For now, echo back
+      sessionInfo.wsClient.send(JSON.stringify({
+        type: 'message',
+        payload: {
+          content: `Echo: ${message.payload?.message}`,
+          timestamp: Date.now(),
+        },
+      }));
       break;
 
     case 'ping':
@@ -115,4 +157,12 @@ export function getActiveSession(sessionId: string): SessionInfo | undefined {
 
 export function getAllActiveSessions(): SessionInfo[] {
   return Array.from(activeSessions.values());
+}
+
+export function stopWebSocketService() {
+  if (wsServer) {
+    wsServer.close();
+    wsServer = null;
+    activeSessions.clear();
+  }
 }

@@ -13,11 +13,14 @@
     "test:once": "vitest run"
   },
   "openclaw": {
-    "extensions": ["./dist/index.js"]
+    "extensions": [
+      "./dist/index.js"
+    ]
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/ws": "^8.5.0",
+    "openclaw": "^2026.2.19-2",
     "typescript": "^5.0.0",
     "vitest": "^1.0.0"
   },

@@ -1,51 +1,97 @@
 /**
- * Channel registration and metadata
+ * Obsidian Channel Plugin
  */
 
-import type { PluginContext } from './types.js';
-import { sendMessage, broadcastMessage } from './rpc.js';
+import type { ChannelPlugin } from "openclaw/plugin-sdk";
+import { getObsidianRuntime } from "./runtime.js";
+import { startWebSocketService } from "./service.js";
 
-export function registerObsidianChannel(ctx: PluginContext) {
-  const { log, runtime } = ctx;
-
-  // Note: Following the pattern from knowledge base - we DON'T import internal
-  // core modules (ERR_PACKAGE_PATH_NOT_EXPORTED). Instead, we use runtime APIs.
+export const obsidianChannelPlugin: ChannelPlugin = {
+  id: "obsidian",
   
-  // Check if runtime has a channel registration API
-  if (!runtime.registerChannel) {
-    log.warn('[obsidian-channel] runtime.registerChannel not available - channel registration may need alternative approach');
-    return;
-  }
-
-  const channelMeta = {
-    id: 'obsidian',
-    name: 'Obsidian',
-    description: 'Bidirectional communication with Obsidian vault',
-    capabilities: ['send', 'receive', 'push'],
-    version: '0.1.0',
-  };
-
-  runtime.registerChannel(channelMeta, {
-    // Outbound handler: agent wants to send message to Obsidian
-    async sendMessage(message: string, options: any) {
-      log.debug('[obsidian-channel] sendMessage called', { options });
-      const sessionId: string | undefined = options?.sessionId;
-      if (sessionId) {
-        return await sendMessage(sessionId, message, ctx);
+  meta: {
+    id: "obsidian",
+    name: "Obsidian",
+    description: "Bidirectional communication with Obsidian vault via WebSocket",
+  },
+  
+  capabilities: {
+    chatTypes: ["direct"],
+    reactions: false,
+    threads: false,
+    media: false,
+    polls: false,
+    nativeCommands: false,
+    blockStreaming: false,
+  },
+  
+  config: {
+    // List account IDs (for us: just "default")
+    listAccountIds: () => ["default"],
+    
+    // Resolve account config
+    resolveAccount: (cfg, accountId) => {
+      const obsidianCfg = cfg.channels?.obsidian;
+      if (!obsidianCfg) {
+        throw new Error("Obsidian channel not configured");
       }
-      // No sessionId → broadcast to all authenticated sessions
-      await broadcastMessage(message, ctx);
-      return { success: true, channel: 'obsidian' };
-    },
-
-    // Get channel status
-    async getStatus() {
+      
       return {
-        connected: true, // Will be dynamic once WS is implemented
-        clients: 0,
+        accountId: accountId ?? "default",
+        enabled: obsidianCfg.enabled !== false,
+        config: obsidianCfg,
       };
     },
-  });
-
-  log.info('[obsidian-channel] Channel registered', channelMeta);
-}
+    
+    // Default account ID
+    defaultAccountId: () => "default",
+    
+    // Set account enabled (no-op for single account)
+    setAccountEnabled: () => {},
+    
+    // Delete account (no-op for single account)
+    deleteAccount: () => {},
+  },
+  
+  // Setup hook: start WebSocket server
+  setup: {
+    async gatewayStart(ctx) {
+      const runtime = getObsidianRuntime();
+      const cfg = ctx.config?.channels?.obsidian;
+      
+      if (!cfg?.enabled) {
+        runtime.log.info("[obsidian-channel] Channel disabled, skipping setup");
+        return;
+      }
+      
+      if (!cfg.authToken) {
+        runtime.log.error("[obsidian-channel] authToken required but not configured");
+        throw new Error("Obsidian channel: authToken required");
+      }
+      
+      runtime.log.info("[obsidian-channel] Starting WebSocket service", {
+        wsPort: cfg.wsPort,
+      });
+      
+      // Start WebSocket server
+      startWebSocketService({
+        wsPort: cfg.wsPort ?? 8765,
+        authToken: cfg.authToken,
+        accounts: cfg.accounts ?? ["main"],
+      });
+      
+      runtime.log.info("[obsidian-channel] WebSocket service started successfully");
+    },
+    
+    async gatewayStop(ctx) {
+      const runtime = getObsidianRuntime();
+      runtime.log.info("[obsidian-channel] Stopping WebSocket service");
+      // TODO: implement graceful shutdown if needed
+    },
+  },
+  
+  // Reload config when channels.obsidian changes
+  reload: {
+    configPrefixes: ["channels.obsidian"],
+  },
+};
