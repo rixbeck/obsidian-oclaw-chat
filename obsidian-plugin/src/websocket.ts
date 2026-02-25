@@ -102,9 +102,10 @@ export class ObsidianWSClient {
           minProtocol: 3,
           maxProtocol: 3,
           client: {
-            id: 'webchat-ui',
-            mode: 'ui',
-            version: '0.1.1',
+            // Use non-Control-UI client id to avoid Control UI origin restrictions
+            id: 'gateway-client',
+            mode: 'backend',
+            version: '0.1.3',
             platform: 'electron',
           },
           auth: {
