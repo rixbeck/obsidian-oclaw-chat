@@ -288,3 +288,46 @@ export function register(ctx: any) {  // ← NAMED EXPORT, wrong signature
 **Custom WS server:** Removed ✅ (only Gateway WS now)
 
 **Next:** Update Obsidian client to use Gateway WS + new protocol (subscribe/send/unsubscribe methods).
+
+---
+
+### 9. Obsidian Plugin Refactor: Gateway Protocol (18:12-18:25)
+
+**Updated WebSocket client** (`obsidian-plugin/src/websocket.ts`):
+- Uses Gateway protocol: `{ type: "req", method, id, params }` → `{ type: "res", id, ok, payload/error }`
+- Async `sendMessage(message)` → calls `obsidian.send` gateway method
+- Subscribe on connect: `obsidian.subscribe({ token, sessionKey, accountId })` → `{ subscriptionId }`
+- Event handling: `{ type: "event", event: "obsidian.message", payload }` → UI message
+
+**Updated settings** (`obsidian-plugin/src/types.ts`, `settings.ts`):
+- New fields: `sessionKey` (default: "main"), `accountId` (default: "main")
+- Gateway URL default: `ws://localhost:18789` (was 8765)
+- Removed "Default Agent" dropdown (sessionKey determines target session)
+
+**Updated view** (`obsidian-plugin/src/view.ts`):
+- Async send: `await wsClient.sendMessage(message)`
+- Removed agent selector UI (session target fixed in settings)
+- Context (active note) embedded in message text if enabled
+
+**Build passed:**
+```
+⚡ Done in 18ms
+main.js  68.5kb
+```
+
+**README updated:**
+- Architecture overview (2-layer plugin system)
+- Setup instructions (channel + Obsidian plugin)
+- Protocol examples (subscribe/send/push)
+- Development + testing references
+
+---
+
+## Updated Status (18:25)
+
+**Channel plugin:** ✅ Gateway methods registered, deployed to Eve-1  
+**Obsidian plugin:** ✅ Gateway protocol implemented, build passing  
+**Custom WS server:** ✅ Removed (port 8765 no longer used)  
+**Protocol:** ✅ JSON-RPC style requests + event push
+
+**Next:** Deploy Obsidian plugin to Eve-1 vault, test E2E (connect → subscribe → send → receive push).

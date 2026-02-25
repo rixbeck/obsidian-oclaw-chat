@@ -17,10 +17,10 @@ export class OpenClawSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Gateway URL')
-      .setDesc('WebSocket URL of the OpenClaw channel plugin running locally.')
+      .setDesc('WebSocket URL of the OpenClaw Gateway (e.g. ws://hostname:18789).')
       .addText((text) =>
         text
-          .setPlaceholder('ws://localhost:8765')
+          .setPlaceholder('ws://localhost:18789')
           .setValue(this.plugin.settings.gatewayUrl)
           .onChange(async (value) => {
             this.plugin.settings.gatewayUrl = value.trim();
@@ -45,17 +45,30 @@ export class OpenClawSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName('Default agent')
-      .setDesc('Which OpenClaw agent to chat with by default.')
-      .addDropdown((drop) => {
-        drop.addOption('main', 'main');
-        drop.addOption('senilla', 'senilla');
-        drop.setValue(this.plugin.settings.defaultAgent);
-        drop.onChange(async (value) => {
-          this.plugin.settings.defaultAgent = value;
-          await this.plugin.saveSettings();
-        });
-      });
+      .setName('Session Key')
+      .setDesc('OpenClaw session to subscribe to (usually "main").')
+      .addText((text) =>
+        text
+          .setPlaceholder('main')
+          .setValue(this.plugin.settings.sessionKey)
+          .onChange(async (value) => {
+            this.plugin.settings.sessionKey = value.trim() || 'main';
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('Account ID')
+      .setDesc('OpenClaw account ID (usually "main").')
+      .addText((text) =>
+        text
+          .setPlaceholder('main')
+          .setValue(this.plugin.settings.accountId)
+          .onChange(async (value) => {
+            this.plugin.settings.accountId = value.trim() || 'main';
+            await this.plugin.saveSettings();
+          })
+      );
 
     new Setting(containerEl)
       .setName('Include active note by default')

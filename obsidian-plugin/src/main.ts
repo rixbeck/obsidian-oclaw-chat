@@ -13,7 +13,10 @@ export default class OpenClawPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    this.wsClient = new ObsidianWSClient();
+    this.wsClient = new ObsidianWSClient(
+      this.settings.sessionKey,
+      this.settings.accountId
+    );
     this.chatManager = new ChatManager();
 
     // Wire incoming WS messages → ChatManager
@@ -76,8 +79,7 @@ export default class OpenClawPlugin extends Plugin {
   private _connectWS(): void {
     this.wsClient.connect(
       this.settings.gatewayUrl,
-      this.settings.authToken,
-      this.settings.defaultAgent
+      this.settings.authToken
     );
   }
 

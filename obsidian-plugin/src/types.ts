@@ -1,19 +1,22 @@
 /** Persisted plugin configuration */
 export interface OpenClawSettings {
-  /** WebSocket URL of the OpenClaw channel plugin (e.g. ws://localhost:8765) */
+  /** WebSocket URL of the OpenClaw Gateway (e.g. ws://100.90.9.68:18789) */
   gatewayUrl: string;
   /** Auth token — must match the channel plugin's authToken */
   authToken: string;
-  /** Default agent to chat with */
-  defaultAgent: string;
+  /** OpenClaw session key to subscribe to (e.g. "main") */
+  sessionKey: string;
+  /** OpenClaw account ID (usually "main") */
+  accountId: string;
   /** Whether to include the active note content with each message */
   includeActiveNote: boolean;
 }
 
 export const DEFAULT_SETTINGS: OpenClawSettings = {
-  gatewayUrl: 'ws://localhost:8765',
+  gatewayUrl: 'ws://localhost:18789',
   authToken: '',
-  defaultAgent: 'main',
+  sessionKey: 'main',
+  accountId: 'main',
   includeActiveNote: false,
 };
 
@@ -33,10 +36,8 @@ export interface WSPayload {
 
 /** Messages RECEIVED from the server (inbound) — discriminated union */
 export type InboundWSPayload =
-  | { type: 'auth'; payload: { success: boolean; sessionId?: string } }
-  | { type: 'message'; payload: { content: string; timestamp: number } }
-  | { type: 'error'; payload: { message: string } }
-  | { type: 'pong' };
+  | { type: 'message'; payload: { content: string; role: string; timestamp: number } }
+  | { type: 'error'; payload: { message: string } };
 
 /** Available agents / models */
 export interface AgentOption {

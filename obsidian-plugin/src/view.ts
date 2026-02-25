@@ -2,7 +2,6 @@ import { ItemView, WorkspaceLeaf } from 'obsidian';
 import type OpenClawPlugin from './main';
 import { ChatManager } from './chat';
 import type { ChatMessage } from './types';
-import { AGENT_OPTIONS } from './models';
 import { getActiveNoteContext } from './context';
 
 export const VIEW_TYPE_OPENCLAW_CHAT = 'openclaw-chat';
@@ -15,7 +14,6 @@ export class OpenClawChatView extends ItemView {
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
-  private agentSelect!: HTMLSelectElement;
   private includeNoteCheckbox!: HTMLInputElement;
   private statusDot!: HTMLElement;
 
@@ -79,14 +77,6 @@ export class OpenClawChatView extends ItemView {
     header.createSpan({ cls: 'oclaw-header-title', text: 'OpenClaw Chat' });
     this.statusDot = header.createDiv({ cls: 'oclaw-status-dot' });
     this.statusDot.title = 'Gateway: disconnected';
-
-    // ── Agent selector ──
-    const agentRow = root.createDiv({ cls: 'oclaw-agent-row' });
-    this.agentSelect = agentRow.createEl('select', { cls: 'oclaw-agent-select' });
-    for (const opt of AGENT_OPTIONS) {
-      const el = this.agentSelect.createEl('option', { value: opt.id, text: opt.label });
-      if (opt.id === this.plugin.settings.defaultAgent) el.selected = true;
-    }
 
     // ── Messages area ──
     this.messagesEl = root.createDiv({ cls: 'oclaw-messages' });
@@ -164,18 +154,16 @@ export class OpenClawChatView extends ItemView {
     const text = this.inputEl.value.trim();
     if (!text) return;
 
-    const agentId = this.agentSelect.value;
-
-    // Build message context
-    let context: Record<string, string> | undefined;
+    // Build message with context if enabled
+    let message = text;
     if (this.includeNoteCheckbox.checked) {
       const note = await getActiveNoteContext(this.app);
       if (note) {
-        context = { activeNote: note.title, noteContent: note.content };
+        message = `Context: [[${note.title}]]\n\n${text}`;
       }
     }
 
-    // Add user message to chat
+    // Add user message to chat UI
     const userMsg = ChatManager.createUserMessage(text);
     this.chatManager.addMessage(userMsg);
 
@@ -183,14 +171,14 @@ export class OpenClawChatView extends ItemView {
     this.inputEl.value = '';
     this.inputEl.style.height = 'auto';
 
-    // Send over WS
-    this.plugin.wsClient.send({
-      type: 'message',
-      payload: {
-        message: text,
-        agentId,
-        ...(context ? { context } : {}),
-      },
-    });
+    // Send over WS (async)
+    try {
+      await this.plugin.wsClient.sendMessage(message);
+    } catch (err) {
+      console.error('[oclaw] Send failed', err);
+      this.chatManager.addMessage(
+        ChatManager.createSystemMessage(`⚠ Send failed: ${err}`)
+      );
+    }
   }
 }
