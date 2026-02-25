@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf } from 'obsidian';
+import { ItemView, Notice, WorkspaceLeaf } from 'obsidian';
 import type OpenClawPlugin from './main';
 import { ChatManager } from './chat';
 import type { ChatMessage } from './types';
@@ -9,6 +9,10 @@ export const VIEW_TYPE_OPENCLAW_CHAT = 'openclaw-chat';
 export class OpenClawChatView extends ItemView {
   private plugin: OpenClawPlugin;
   private chatManager: ChatManager;
+
+  // State
+  private isConnected = false;
+  private isWorking = false;
 
   // DOM refs
   private messagesEl!: HTMLElement;
@@ -45,16 +49,22 @@ export class OpenClawChatView extends ItemView {
 
     // Subscribe to WS state changes
     this.plugin.wsClient.onStateChange = (state) => {
-      const connected = state === 'connected';
-      this.statusDot.toggleClass('connected', connected);
+      this.isConnected = state === 'connected';
+      this.statusDot.toggleClass('connected', this.isConnected);
       this.statusDot.title = `Gateway: ${state}`;
-      this.sendBtn.disabled = !connected;
+      this._updateSendButton();
+    };
+
+    // Subscribe to “working” (request-in-flight) state
+    this.plugin.wsClient.onWorkingChange = (working) => {
+      this.isWorking = working;
+      this._updateSendButton();
     };
 
     // Reflect current state
-    const connected = this.plugin.wsClient.state === 'connected';
-    this.statusDot.toggleClass('connected', connected);
-    this.sendBtn.disabled = !connected;
+    this.isConnected = this.plugin.wsClient.state === 'connected';
+    this.statusDot.toggleClass('connected', this.isConnected);
+    this._updateSendButton();
 
     this._renderMessages(this.chatManager.getMessages());
   }
@@ -63,6 +73,7 @@ export class OpenClawChatView extends ItemView {
     this.chatManager.onUpdate = null;
     this.chatManager.onMessageAdded = null;
     this.plugin.wsClient.onStateChange = null;
+    this.plugin.wsClient.onWorkingChange = null;
   }
 
   // ── UI construction ───────────────────────────────────────────────────────
@@ -128,7 +139,8 @@ export class OpenClawChatView extends ItemView {
     }
 
     for (const msg of messages) {
-      const el = this.messagesEl.createDiv({ cls: `oclaw-message ${msg.role}` });
+      const levelClass = msg.level ? ` ${msg.level}` : '';
+      const el = this.messagesEl.createDiv({ cls: `oclaw-message ${msg.role}${levelClass}` });
       el.createSpan({ text: msg.content });
     }
 
@@ -141,11 +153,29 @@ export class OpenClawChatView extends ItemView {
     // Remove empty-state placeholder if present
     this.messagesEl.querySelector('.oclaw-placeholder')?.remove();
 
-    const el = this.messagesEl.createDiv({ cls: `oclaw-message ${msg.role}` });
+    const levelClass = msg.level ? ` ${msg.level}` : '';
+    const el = this.messagesEl.createDiv({ cls: `oclaw-message ${msg.role}${levelClass}` });
     el.createSpan({ text: msg.content });
 
     // Scroll to bottom
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  private _updateSendButton(): void {
+    const disabled = !this.isConnected || this.isWorking;
+    this.sendBtn.disabled = disabled;
+
+    this.sendBtn.toggleClass('is-working', this.isWorking);
+    this.sendBtn.setAttr('aria-busy', this.isWorking ? 'true' : 'false');
+
+    if (this.isWorking) {
+      // Replace button contents with spinner
+      this.sendBtn.empty();
+      this.sendBtn.createDiv({ cls: 'oclaw-spinner', attr: { 'aria-hidden': 'true' } });
+    } else {
+      // Restore label
+      this.sendBtn.setText('Send');
+    }
   }
 
   // ── Send handler ──────────────────────────────────────────────────────────
@@ -176,8 +206,9 @@ export class OpenClawChatView extends ItemView {
       await this.plugin.wsClient.sendMessage(message);
     } catch (err) {
       console.error('[oclaw] Send failed', err);
+      new Notice(`OpenClaw Chat: send failed (${String(err)})`);
       this.chatManager.addMessage(
-        ChatManager.createSystemMessage(`⚠ Send failed: ${err}`)
+        ChatManager.createSystemMessage(`⚠ Send failed: ${err}`, 'error')
       );
     }
   }

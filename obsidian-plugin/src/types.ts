@@ -24,6 +24,8 @@ export const DEFAULT_SETTINGS: OpenClawSettings = {
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
+  /** Optional severity for system/status messages */
+  level?: 'info' | 'error';
   content: string;
   timestamp: number;
 }

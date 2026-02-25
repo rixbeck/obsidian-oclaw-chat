@@ -44,10 +44,11 @@ export class ChatManager {
   }
 
   /** Create a system / status message (errors, reconnect notices, etc.) */
-  static createSystemMessage(content: string): ChatMessage {
+  static createSystemMessage(content: string, level: ChatMessage['level'] = 'info'): ChatMessage {
     return {
       id: `sys-${Date.now()}`,
       role: 'system',
+      level,
       content,
       timestamp: Date.now(),
     };

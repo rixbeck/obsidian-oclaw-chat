@@ -22,7 +22,7 @@ export default class OpenClawPlugin extends Plugin {
         this.chatManager.addMessage(ChatManager.createAssistantMessage(msg.payload.content));
       } else if (msg.type === 'error') {
         const errText = msg.payload.message ?? 'Unknown error from gateway';
-        this.chatManager.addMessage(ChatManager.createSystemMessage(`⚠ ${errText}`));
+        this.chatManager.addMessage(ChatManager.createSystemMessage(`⚠ ${errText}`, 'error'));
       }
     };
 

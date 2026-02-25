@@ -164,3 +164,35 @@
 .oclaw-context-row input[type="checkbox"] {
   cursor: pointer;
 }
+
+/* ── Working spinner (Send button) ─────────────────────────────────────── */
+
+.oclaw-send-btn.is-working {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+}
+
+.oclaw-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: rgba(255, 255, 255, 0.95);
+  animation: oclaw-spin 0.9s linear infinite;
+}
+
+@keyframes oclaw-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Error message styling ─────────────────────────────────────────────── */
+
+.oclaw-message.system.error {
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+  border-left: 3px solid var(--color-red);
+}

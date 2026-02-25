@@ -20,7 +20,12 @@ const RECONNECT_DELAY_MS = 3_000;
 /** Interval for sending heartbeat pings (check connection liveness) */
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
+/** Safety valve: hide working spinner if no assistant reply arrives in time */
+const WORKING_MAX_MS = 120_000;
+
 export type WSClientState = 'disconnected' | 'connecting' | 'handshaking' | 'connected';
+
+export type WorkingStateListener = (working: boolean) => void;
 
 interface PendingRequest {
   resolve: (payload: any) => void;
@@ -158,17 +163,20 @@ export class ObsidianWSClient {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private workingTimer: ReturnType<typeof setTimeout> | null = null;
   private intentionalClose = false;
   private sessionKey: string;
   private url = '';
   private token = '';
   private requestId = 0;
   private pendingRequests = new Map<string, PendingRequest>();
+  private working = false;
 
   state: WSClientState = 'disconnected';
 
   onMessage: ((msg: InboundWSPayload) => void) | null = null;
   onStateChange: ((state: WSClientState) => void) | null = null;
+  onWorkingChange: WorkingStateListener | null = null;
 
   constructor(sessionKey: string) {
     this.sessionKey = sessionKey;
@@ -184,6 +192,7 @@ export class ObsidianWSClient {
   disconnect(): void {
     this.intentionalClose = true;
     this._stopTimers();
+    this._setWorking(false);
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -198,12 +207,16 @@ export class ObsidianWSClient {
 
     const idempotencyKey = `obsidian-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
+    // Show “working” ONLY after the gateway acknowledges the request.
     await this._sendRequest('chat.send', {
       sessionKey: this.sessionKey,
       message,
       idempotencyKey,
       // deliver defaults to true in gateway; keep default
     });
+
+    this._setWorking(true);
+    this._armWorkingSafetyTimeout();
   }
 
   private _connect(): void {
@@ -328,6 +341,9 @@ export class ObsidianWSClient {
             return;
           }
 
+          // First assistant final message ends the “working” state.
+          this._setWorking(false);
+
           const text = extractTextFromGatewayMessage(msg);
           if (!text) return;
 
@@ -353,6 +369,7 @@ export class ObsidianWSClient {
 
     ws.onclose = () => {
       this._stopTimers();
+      this._setWorking(false);
       this._setState('disconnected');
 
       for (const pending of this.pendingRequests.values()) {
@@ -428,6 +445,7 @@ export class ObsidianWSClient {
 
   private _stopTimers(): void {
     this._stopHeartbeat();
+    this._disarmWorkingSafetyTimeout();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -438,5 +456,30 @@ export class ObsidianWSClient {
     if (this.state === state) return;
     this.state = state;
     this.onStateChange?.(state);
+  }
+
+  private _setWorking(working: boolean): void {
+    if (this.working === working) return;
+    this.working = working;
+    this.onWorkingChange?.(working);
+
+    if (!working) {
+      this._disarmWorkingSafetyTimeout();
+    }
+  }
+
+  private _armWorkingSafetyTimeout(): void {
+    this._disarmWorkingSafetyTimeout();
+    this.workingTimer = setTimeout(() => {
+      // If the gateway never emits an assistant final response, don’t leave UI stuck.
+      this._setWorking(false);
+    }, WORKING_MAX_MS);
+  }
+
+  private _disarmWorkingSafetyTimeout(): void {
+    if (this.workingTimer) {
+      clearTimeout(this.workingTimer);
+      this.workingTimer = null;
+    }
   }
 }
