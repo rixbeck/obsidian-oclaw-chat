@@ -238,3 +238,53 @@ export function register(ctx: any) {  // ← NAMED EXPORT, wrong signature
 
 **Status:** In progress, type errors blocking build  
 **Next checkpoint:** After successful plugin load in gateway
+
+---
+
+### 7. Architecture Refactor: Gateway Method-Based API (17:48-18:11)
+
+**Rationale:** Remove custom WS server (port 8765), use Gateway WebSocket only (18789).
+
+✅ **Gateway bind mode changed to tailnet:**
+- Eve-1 config: `gateway.bind = "tailnet"` (was `loopback`)
+- Gateway now listens on Tailscale IP: `ws://100.90.9.68:18789`
+- Obsidian clients can connect from tailnet (not just localhost)
+
+✅ **New gateway.ts implementation:**
+- Gateway methods: `obsidian.subscribe`, `obsidian.send`, `obsidian.unsubscribe`
+- Session-scoped subscriptions: `subscriptionId -> { sessionKey, connectionId }`
+- Broadcast function captured from `context.broadcastToConnIds` (first subscribe call)
+- Push hook: `api.on("before_message_write")` → filters assistant messages → broadcasts to subscribed clients
+
+✅ **index.ts refactored:**
+- Removed `registerService()` call (no custom WS server)
+- Registered 3 gateway methods
+- Registered `before_message_write` hook for push
+- No `gateway_connection_closed` hook (doesn't exist in OpenClaw SDK)
+
+✅ **TypeScript build fixed:**
+- Corrected `GatewayBroadcastToConnIdsFn` signature: `(event: string, payload: unknown, connIds: ReadonlySet<string>, opts?)` 
+- Used `client.connId` instead of `context.connectionId` (correct SDK type)
+- Build passed: `npm run build` ✅
+
+✅ **Deployed to Eve-1:**
+- Synced `dist/` to `eve-1:.openclaw/extensions/openclaw-channel-obsidian/dist/`
+- Gateway restarted with `--bind tailnet --port 18789`
+
+✅ **Gateway logs confirm:**
+```
+2026-02-25T17:09:58.983Z [gateway] [obsidian] Gateway methods registered (subscribe, send, unsubscribe)
+2026-02-25T17:09:59.257Z [gateway] listening on ws://100.90.9.68:18789
+```
+
+✅ **No more port 8765 WS server** (successfully removed)
+
+---
+
+## Updated Status
+
+**Gateway running:** Eve-1, ws://100.90.9.68:18789, tailnet bind ✅  
+**Plugin loaded:** openclaw-channel-obsidian, gateway methods registered ✅  
+**Custom WS server:** Removed ✅ (only Gateway WS now)
+
+**Next:** Update Obsidian client to use Gateway WS + new protocol (subscribe/send/unsubscribe methods).
