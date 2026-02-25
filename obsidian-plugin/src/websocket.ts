@@ -35,20 +35,28 @@ type DeviceIdentity = {
 
 const DEVICE_STORAGE_KEY = 'openclawChat.deviceIdentity.v1';
 
-function base64Encode(bytes: ArrayBuffer): string {
+function base64UrlEncode(bytes: ArrayBuffer): string {
   const u8 = new Uint8Array(bytes);
   let s = '';
   for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
-  return btoa(s);
+  const b64 = btoa(s);
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function hexEncode(bytes: ArrayBuffer): string {
+  const u8 = new Uint8Array(bytes);
+  return Array.from(u8)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 function utf8Bytes(text: string): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
-async function sha256Base64(bytes: ArrayBuffer): Promise<string> {
+async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return base64Encode(digest);
+  return hexEncode(digest);
 }
 
 async function loadOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
@@ -64,12 +72,12 @@ async function loadOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
 
   // IMPORTANT: device.id must be a stable fingerprint for the public key.
   // The gateway enforces deviceId ↔ publicKey binding; random ids can cause "device identity mismatch".
-  const fingerprint = await sha256Base64(pubRaw);
-  const id = `obsidian:${fingerprint}`;
+  const deviceId = await sha256Hex(pubRaw);
+  const id = deviceId;
 
   const identity: DeviceIdentity = {
     id,
-    publicKey: base64Encode(pubRaw),
+    publicKey: base64UrlEncode(pubRaw),
     privateKeyJwk: privJwk,
   };
 
@@ -77,7 +85,33 @@ async function loadOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
   return identity;
 }
 
-async function signNonce(identity: DeviceIdentity, nonce: string): Promise<{ signature: string; signedAt: number }> {
+function buildDeviceAuthPayload(params: {
+  deviceId: string;
+  clientId: string;
+  clientMode: string;
+  role: string;
+  scopes: string[];
+  signedAtMs: number;
+  token: string;
+  nonce?: string;
+}): string {
+  const version = params.nonce ? 'v2' : 'v1';
+  const scopes = params.scopes.join(',');
+  const base = [
+    version,
+    params.deviceId,
+    params.clientId,
+    params.clientMode,
+    params.role,
+    scopes,
+    String(params.signedAtMs),
+    params.token || '',
+  ];
+  if (version === 'v2') base.push(params.nonce || '');
+  return base.join('|');
+}
+
+async function signDevicePayload(identity: DeviceIdentity, payload: string): Promise<{ signature: string; signedAt: number }> {
   const privateKey = await crypto.subtle.importKey(
     'jwk',
     identity.privateKeyJwk,
@@ -87,9 +121,8 @@ async function signNonce(identity: DeviceIdentity, nonce: string): Promise<{ sig
   );
 
   const signedAt = Date.now();
-  // Signature is over the nonce bytes (server-provided)
-  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, utf8Bytes(nonce));
-  return { signature: base64Encode(sig), signedAt };
+  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, utf8Bytes(payload));
+  return { signature: base64UrlEncode(sig), signedAt };
 }
 
 function extractTextFromGatewayMessage(msg: any): string {
@@ -191,7 +224,18 @@ export class ObsidianWSClient {
 
       try {
         const identity = await loadOrCreateDeviceIdentity();
-        const sig = await signNonce(identity, connectNonce);
+        const signedAtMs = Date.now();
+        const payload = buildDeviceAuthPayload({
+          deviceId: identity.id,
+          clientId: 'gateway-client',
+          clientMode: 'backend',
+          role: 'operator',
+          scopes: ['operator.read', 'operator.write'],
+          signedAtMs,
+          token: this.token,
+          nonce: connectNonce,
+        });
+        const sig = await signDevicePayload(identity, payload);
 
         await this._sendRequest('connect', {
           minProtocol: 3,
@@ -199,7 +243,7 @@ export class ObsidianWSClient {
           client: {
             id: 'gateway-client',
             mode: 'backend',
-            version: '0.1.9',
+            version: '0.1.10',
             platform: 'electron',
           },
           role: 'operator',
@@ -208,7 +252,7 @@ export class ObsidianWSClient {
             id: identity.id,
             publicKey: identity.publicKey,
             signature: sig.signature,
-            signedAt: sig.signedAt,
+            signedAt: signedAtMs,
             nonce: connectNonce,
           },
           auth: {
