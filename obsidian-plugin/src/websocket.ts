@@ -2,6 +2,8 @@
  * WebSocket client for OpenClaw Gateway
  * 
  * Uses Gateway protocol: JSON-RPC style requests + event push
+ * - Connect handshake first (required by Gateway)
+ * - Then subscribe to session
  * - Request: { type: "req", method, id, params }
  * - Response: { type: "res", id, ok, payload/error }
  * - Event: { type: "event", event, payload }
@@ -14,7 +16,7 @@ const RECONNECT_DELAY_MS = 3_000;
 /** Interval for sending heartbeat pings (check connection liveness) */
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
-export type WSClientState = 'disconnected' | 'connecting' | 'subscribing' | 'connected';
+export type WSClientState = 'disconnected' | 'connecting' | 'handshaking' | 'subscribing' | 'connected';
 
 interface PendingRequest {
   resolve: (payload: any) => void;
@@ -93,9 +95,25 @@ export class ObsidianWSClient {
     this.ws = ws;
 
     ws.onopen = async () => {
-      this._setState('subscribing');
+      this._setState('handshaking');
       try {
-        // Subscribe to session after connection established
+        // Step 1: Connect handshake (required by Gateway)
+        await this._sendRequest('connect', {
+          minProtocol: 1,
+          maxProtocol: 1,
+          client: {
+            id: 'webchat-ui',
+            mode: 'ui',
+            version: '0.1.0',
+            platform: 'electron',
+          },
+          auth: {
+            token: this.token,
+          },
+        });
+
+        // Step 2: Subscribe to session
+        this._setState('subscribing');
         const result = await this._sendRequest('obsidian.subscribe', {
           token: this.token,
           sessionKey: this.sessionKey,
@@ -110,7 +128,7 @@ export class ObsidianWSClient {
           throw new Error('Subscribe failed: no subscriptionId returned');
         }
       } catch (err) {
-        console.error('[oclaw-ws] Subscribe failed', err);
+        console.error('[oclaw-ws] Connection setup failed', err);
         ws.close();
       }
     };
@@ -139,17 +157,22 @@ export class ObsidianWSClient {
       }
 
       // Handle event push from gateway
-      if (frame.type === 'event' && frame.event === 'obsidian.message') {
-        // Convert gateway event to our internal message format
-        const msg: InboundWSPayload = {
-          type: 'message',
-          payload: {
-            content: frame.payload?.content || '',
-            role: frame.payload?.role || 'assistant',
-            timestamp: frame.payload?.timestamp || Date.now(),
-          },
-        };
-        this.onMessage?.(msg);
+      if (frame.type === 'event') {
+        // Obsidian message push
+        if (frame.event === 'obsidian.message') {
+          const msg: InboundWSPayload = {
+            type: 'message',
+            payload: {
+              content: frame.payload?.content || '',
+              role: frame.payload?.role || 'assistant',
+              timestamp: frame.payload?.timestamp || Date.now(),
+            },
+          };
+          this.onMessage?.(msg);
+          return;
+        }
+
+        // Ignore other events (connect.challenge, etc.)
         return;
       }
 
