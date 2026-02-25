@@ -161,9 +161,11 @@ related:
 - ✅ Tailscale active: `tailscale status` shows `eve-1` online
 - ✅ IP address known: `tailscale ip -4 eve-1` or check `/etc/hosts` / `~/.ssh/config`
 
-**⚠️ Current status (2026-02-25 14:40):**
-- ❌ SSH connection timeout: `ssh eve-1` fails → **blocker**
-- Action: ensure Tailscale + eve-1 online before deployment
+**✅ Current status (2026-02-25 14:46 - Hotfix):**
+- ✅ SSH connection **works** (false timeout due to ConnectTimeout=3s too short)
+- ✅ Eve-1 hostname: `eve-01` (SSH alias `eve-1` works via Tailscale)
+- ✅ OpenClaw installed: `~/.openclaw/` exists
+- **Ready for deployment** (no blockers)
 
 ---
 
@@ -483,5 +485,5 @@ rm -rf ~/.obsidian/vaults/openclaw-test-vault/.obsidian/plugins/obsidian-opencla
 ---
 
 **Plan status:** Draft (needs explicit "start work" command from Rix)
-**Blocker:** Eve-1 SSH connection timeout → resolve before deployment
-**Next step:** Ensure Eve-1 online + Tailscale active → retry SSH connection → start WORK phase
+**Blocker:** ~~Eve-1 SSH connection timeout~~ **RESOLVED** (hotfix: ConnectTimeout too short)
+**Next step:** Awaiting "start work" command → begin deployment (no blockers)
