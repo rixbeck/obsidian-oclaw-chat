@@ -147,6 +147,13 @@ function extractTextFromGatewayMessage(msg: any): string {
   }
 }
 
+function sessionKeyMatches(configured: string, incoming: string): boolean {
+  if (incoming === configured) return true;
+  // OpenClaw resolves "main" to canonical session key like "agent:main:main".
+  if (configured === 'main' && incoming === 'agent:main:main') return true;
+  return false;
+}
+
 export class ObsidianWSClient {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -304,7 +311,13 @@ export class ObsidianWSClient {
 
         if (frame.event === 'chat') {
           const payload = frame.payload;
-          if (payload?.sessionKey !== this.sessionKey) {
+          const incomingSessionKey = String(payload?.sessionKey || '');
+          if (!incomingSessionKey || !sessionKeyMatches(this.sessionKey, incomingSessionKey)) {
+            return;
+          }
+
+          // Avoid double-render: gateway emits delta + final. Render only final.
+          if (payload?.state && payload.state !== 'final') {
             return;
           }
 
@@ -317,6 +330,11 @@ export class ObsidianWSClient {
 
           const text = extractTextFromGatewayMessage(msg);
           if (!text) return;
+
+          // Optional: hide heartbeat acks (noise in UI)
+          if (text.trim() === 'HEARTBEAT_OK') {
+            return;
+          }
 
           this.onMessage?.({
             type: 'message',
