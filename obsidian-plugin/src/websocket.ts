@@ -1,12 +1,12 @@
 /**
  * WebSocket client for OpenClaw Gateway
- * 
- * Uses Gateway protocol: JSON-RPC style requests + event push
- * - Connect handshake first (required by Gateway)
- * - Then subscribe to session
- * - Request: { type: "req", method, id, params }
- * - Response: { type: "res", id, ok, payload/error }
- * - Event: { type: "event", event, payload }
+ *
+ * Pivot (2026-02-25): Do NOT use custom obsidian.* gateway methods.
+ * Those require operator.admin scope which is not granted to external clients.
+ *
+ * Instead we use built-in gateway methods/events:
+ * - Send: chat.send({ sessionKey, message, idempotencyKey, ... })
+ * - Receive: event "chat" (filter by sessionKey)
  */
 
 import type { InboundWSPayload } from './types';
@@ -16,11 +16,33 @@ const RECONNECT_DELAY_MS = 3_000;
 /** Interval for sending heartbeat pings (check connection liveness) */
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
-export type WSClientState = 'disconnected' | 'connecting' | 'handshaking' | 'subscribing' | 'connected';
+export type WSClientState = 'disconnected' | 'connecting' | 'handshaking' | 'connected';
 
 interface PendingRequest {
   resolve: (payload: any) => void;
   reject: (error: any) => void;
+}
+
+function extractTextFromGatewayMessage(msg: any): string {
+  if (!msg) return '';
+
+  // Most common: { role, content } where content can be string or [{type:'text',text:'...'}]
+  const content = msg.content ?? msg.message ?? msg;
+  if (typeof content === 'string') return content;
+
+  if (Array.isArray(content)) {
+    const parts = content
+      .filter((c) => c && typeof c === 'object' && c.type === 'text' && typeof c.text === 'string')
+      .map((c) => c.text);
+    return parts.join('\n');
+  }
+
+  // Fallback
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return String(content);
+  }
 }
 
 export class ObsidianWSClient {
@@ -28,9 +50,7 @@ export class ObsidianWSClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private intentionalClose = false;
-  private subscriptionId: string | null = null;
   private sessionKey: string;
-  private accountId: string;
   private url = '';
   private token = '';
   private requestId = 0;
@@ -38,16 +58,12 @@ export class ObsidianWSClient {
 
   state: WSClientState = 'disconnected';
 
-  // ── Callbacks (set by consumers) ─────────────────────────────────────────
   onMessage: ((msg: InboundWSPayload) => void) | null = null;
   onStateChange: ((state: WSClientState) => void) | null = null;
 
-  constructor(sessionKey: string, accountId = 'main') {
+  constructor(sessionKey: string) {
     this.sessionKey = sessionKey;
-    this.accountId = accountId;
   }
-
-  // ── Public API ────────────────────────────────────────────────────────────
 
   connect(url: string, token: string): void {
     this.url = url;
@@ -67,17 +83,19 @@ export class ObsidianWSClient {
   }
 
   async sendMessage(message: string): Promise<void> {
-    if (!this.subscriptionId) {
-      throw new Error('Not subscribed — call connect() first');
+    if (this.state !== 'connected') {
+      throw new Error('Not connected — call connect() first');
     }
 
-    await this._sendRequest('obsidian.send', {
-      subscriptionId: this.subscriptionId,
+    const idempotencyKey = `obsidian-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+    await this._sendRequest('chat.send', {
+      sessionKey: this.sessionKey,
       message,
+      idempotencyKey,
+      // deliver defaults to true in gateway; keep default
     });
   }
-
-  // ── Internal ──────────────────────────────────────────────────────────────
 
   private _connect(): void {
     if (this.ws) {
@@ -97,41 +115,24 @@ export class ObsidianWSClient {
     ws.onopen = async () => {
       this._setState('handshaking');
       try {
-        // Step 1: Connect handshake (required by Gateway)
         await this._sendRequest('connect', {
           minProtocol: 3,
           maxProtocol: 3,
           client: {
-            // Use non-Control-UI client id to avoid Control UI origin restrictions
             id: 'gateway-client',
             mode: 'backend',
-            version: '0.1.5',
+            version: '0.1.7',
             platform: 'electron',
           },
-          // Request elevated operator scope for custom gateway methods
-          role: 'operator',
-          scopes: ['operator.admin'],
           auth: {
             token: this.token,
           },
         });
 
-        // Step 2: Subscribe to session
-        this._setState('subscribing');
-        const result = await this._sendRequest('obsidian.subscribe', {
-          sessionKey: this.sessionKey,
-          accountId: this.accountId,
-        });
-
-        if (result?.subscriptionId) {
-          this.subscriptionId = result.subscriptionId;
-          this._setState('connected');
-          this._startHeartbeat();
-        } else {
-          throw new Error('Subscribe failed: no subscriptionId returned');
-        }
+        this._setState('connected');
+        this._startHeartbeat();
       } catch (err) {
-        console.error('[oclaw-ws] Connection setup failed', err);
+        console.error('[oclaw-ws] Connect handshake failed', err);
         ws.close();
       }
     };
@@ -145,49 +146,54 @@ export class ObsidianWSClient {
         return;
       }
 
-      // Handle response to pending request
+      // Responses
       if (frame.type === 'res') {
         const pending = this.pendingRequests.get(frame.id);
         if (pending) {
           this.pendingRequests.delete(frame.id);
-          if (frame.ok) {
-            pending.resolve(frame.payload);
-          } else {
-            pending.reject(new Error(frame.error?.message || 'Request failed'));
-          }
+          if (frame.ok) pending.resolve(frame.payload);
+          else pending.reject(new Error(frame.error?.message || 'Request failed'));
         }
         return;
       }
 
-      // Handle event push from gateway
+      // Events
       if (frame.type === 'event') {
-        // Obsidian message push
-        if (frame.event === 'obsidian.message') {
-          const msg: InboundWSPayload = {
+        if (frame.event === 'chat') {
+          const payload = frame.payload;
+          if (payload?.sessionKey !== this.sessionKey) {
+            return;
+          }
+
+          // We only append assistant output to UI.
+          const msg = payload?.message;
+          const role = msg?.role ?? 'assistant';
+          if (role !== 'assistant') {
+            return;
+          }
+
+          const text = extractTextFromGatewayMessage(msg);
+          if (!text) return;
+
+          this.onMessage?.({
             type: 'message',
             payload: {
-              content: frame.payload?.content || '',
-              role: frame.payload?.role || 'assistant',
-              timestamp: frame.payload?.timestamp || Date.now(),
+              content: text,
+              role: 'assistant',
+              timestamp: Date.now(),
             },
-          };
-          this.onMessage?.(msg);
-          return;
+          });
         }
-
-        // Ignore other events (connect.challenge, etc.)
         return;
       }
 
-      // Unknown frame type — ignore
       console.debug('[oclaw-ws] Unhandled frame', frame);
     };
 
     ws.onclose = () => {
       this._stopTimers();
       this._setState('disconnected');
-      this.subscriptionId = null;
-      // Reject all pending requests
+
       for (const pending of this.pendingRequests.values()) {
         pending.reject(new Error('Connection closed'));
       }
@@ -200,7 +206,6 @@ export class ObsidianWSClient {
 
     ws.onerror = (ev: Event) => {
       console.error('[oclaw-ws] WebSocket error', ev);
-      // onclose will fire after onerror — reconnect logic handled there
     };
   }
 
@@ -214,16 +219,15 @@ export class ObsidianWSClient {
       const id = `req-${++this.requestId}`;
       this.pendingRequests.set(id, { resolve, reject });
 
-      const frame = {
-        type: 'req',
-        method,
-        id,
-        params,
-      };
+      this.ws.send(
+        JSON.stringify({
+          type: 'req',
+          method,
+          id,
+          params,
+        })
+      );
 
-      this.ws.send(JSON.stringify(frame));
-
-      // Timeout after 30s
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
@@ -248,8 +252,6 @@ export class ObsidianWSClient {
     this._stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       if (this.ws?.readyState !== WebSocket.OPEN) return;
-      // Simple heartbeat: check connection liveness
-      // Gateway will close stale connections automatically
       if (this.ws.bufferedAmount > 0) {
         console.warn('[oclaw-ws] Send buffer not empty — connection may be stalled');
       }

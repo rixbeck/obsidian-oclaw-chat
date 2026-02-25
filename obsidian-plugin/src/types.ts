@@ -6,7 +6,7 @@ export interface OpenClawSettings {
   authToken: string;
   /** OpenClaw session key to subscribe to (e.g. "main") */
   sessionKey: string;
-  /** OpenClaw account ID (usually "main") */
+  /** (Deprecated) OpenClaw account ID (unused; chat.send uses sessionKey) */
   accountId: string;
   /** Whether to include the active note content with each message */
   includeActiveNote: boolean;
