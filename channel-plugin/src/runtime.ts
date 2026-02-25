@@ -2,15 +2,15 @@
  * Runtime reference storage for Obsidian channel plugin
  */
 
-import type { OpenClawRuntime } from "openclaw/plugin-sdk";
+import type { PluginRuntime } from "openclaw/plugin-sdk";
 
-let runtime: OpenClawRuntime | null = null;
+let runtime: PluginRuntime | null = null;
 
-export function setObsidianRuntime(rt: OpenClawRuntime): void {
+export function setObsidianRuntime(rt: PluginRuntime): void {
   runtime = rt;
 }
 
-export function getObsidianRuntime(): OpenClawRuntime {
+export function getObsidianRuntime(): PluginRuntime {
   if (!runtime) {
     throw new Error("Obsidian runtime not initialized");
   }

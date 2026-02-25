@@ -2,17 +2,17 @@
  * Obsidian Channel Plugin
  */
 
-import type { ChannelPlugin } from "openclaw/plugin-sdk";
-import { getObsidianRuntime } from "./runtime.js";
-import { startWebSocketService } from "./service.js";
+import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
 
 export const obsidianChannelPlugin: ChannelPlugin = {
   id: "obsidian",
   
   meta: {
     id: "obsidian",
-    name: "Obsidian",
-    description: "Bidirectional communication with Obsidian vault via WebSocket",
+    label: "Obsidian",
+    selectionLabel: "Obsidian",
+    docsPath: "/channels/obsidian",
+    blurb: "Bidirectional communication with Obsidian vault via WebSocket",
   },
   
   capabilities: {
@@ -30,7 +30,7 @@ export const obsidianChannelPlugin: ChannelPlugin = {
     listAccountIds: () => ["default"],
     
     // Resolve account config
-    resolveAccount: (cfg, accountId) => {
+    resolveAccount: (cfg: OpenClawConfig, accountId?: string | null) => {
       const obsidianCfg = cfg.channels?.obsidian;
       if (!obsidianCfg) {
         throw new Error("Obsidian channel not configured");
@@ -46,47 +46,16 @@ export const obsidianChannelPlugin: ChannelPlugin = {
     // Default account ID
     defaultAccountId: () => "default",
     
-    // Set account enabled (no-op for single account)
-    setAccountEnabled: () => {},
-    
-    // Delete account (no-op for single account)
-    deleteAccount: () => {},
-  },
-  
-  // Setup hook: start WebSocket server
-  setup: {
-    async gatewayStart(ctx) {
-      const runtime = getObsidianRuntime();
-      const cfg = ctx.config?.channels?.obsidian;
-      
-      if (!cfg?.enabled) {
-        runtime.log.info("[obsidian-channel] Channel disabled, skipping setup");
-        return;
-      }
-      
-      if (!cfg.authToken) {
-        runtime.log.error("[obsidian-channel] authToken required but not configured");
-        throw new Error("Obsidian channel: authToken required");
-      }
-      
-      runtime.log.info("[obsidian-channel] Starting WebSocket service", {
-        wsPort: cfg.wsPort,
-      });
-      
-      // Start WebSocket server
-      startWebSocketService({
-        wsPort: cfg.wsPort ?? 8765,
-        authToken: cfg.authToken,
-        accounts: cfg.accounts ?? ["main"],
-      });
-      
-      runtime.log.info("[obsidian-channel] WebSocket service started successfully");
+    // Set account enabled
+    setAccountEnabled: (params: { cfg: OpenClawConfig; accountId: string; enabled: boolean }) => {
+      // No-op for single account channel
+      return params.cfg;
     },
     
-    async gatewayStop(ctx) {
-      const runtime = getObsidianRuntime();
-      runtime.log.info("[obsidian-channel] Stopping WebSocket service");
-      // TODO: implement graceful shutdown if needed
+    // Delete account
+    deleteAccount: (params: { cfg: OpenClawConfig; accountId: string }) => {
+      // No-op for single account channel
+      return params.cfg;
     },
   },
   

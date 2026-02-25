@@ -10,13 +10,16 @@ import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 import { obsidianChannelPlugin } from "./channel.js";
 import { setObsidianRuntime } from "./runtime.js";
 
-const plugin = {
+const plugin: any = {
   id: "openclaw-channel-obsidian",
   name: "Obsidian Channel",
   description: "Bidirectional communication channel for Obsidian (WebSocket + RPC)",
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenClawPluginApi) {
+    // Store runtime reference for later use
     setObsidianRuntime(api.runtime);
+    
+    // Register channel with OpenClaw
     api.registerChannel({ plugin: obsidianChannelPlugin });
   },
 };

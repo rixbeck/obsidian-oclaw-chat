@@ -29,7 +29,7 @@ let wsServer: WebSocketServer | null = null;
 
 export function startWebSocketService(config: ObsidianConfig) {
   const runtime = getObsidianRuntime();
-  const { log } = runtime;
+  const log = runtime.logging.getChildLogger({ plugin: "openclaw-channel-obsidian", component: "ws" });
 
   // Prevent double-start
   if (wsServer) {
@@ -46,7 +46,7 @@ export function startWebSocketService(config: ObsidianConfig) {
 
   wss.on('connection', (ws: WebSocket, req) => {
     const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    log.debug('[obsidian-channel] New connection', { clientId, url: req.url });
+    log.debug?.('[obsidian-channel] New connection', { clientId, url: req.url });
 
     let sessionInfo: SessionInfo | null = null;
 
@@ -120,13 +120,13 @@ export function startWebSocketService(config: ObsidianConfig) {
 
 async function handleMessage(message: WSMessage, sessionInfo: SessionInfo) {
   const runtime = getObsidianRuntime();
-  const { log } = runtime;
+  const log = runtime.logging.getChildLogger({ plugin: "openclaw-channel-obsidian", component: "ws" });
 
   switch (message.type) {
     case 'message':
       // Route message to agent session
       // TODO: implement routing to OpenClaw session
-      log.info('[obsidian-channel] Message from client', {
+      log.debug?.('[obsidian-channel] Message from client', {
         sessionId: sessionInfo.sessionId,
         agentId: sessionInfo.agentId,
         messagePreview: message.payload?.message?.substring(0, 100),
