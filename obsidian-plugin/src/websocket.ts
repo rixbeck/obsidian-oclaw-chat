@@ -99,12 +99,12 @@ export class ObsidianWSClient {
       try {
         // Step 1: Connect handshake (required by Gateway)
         await this._sendRequest('connect', {
-          minProtocol: 1,
-          maxProtocol: 1,
+          minProtocol: 3,
+          maxProtocol: 3,
           client: {
             id: 'webchat-ui',
             mode: 'ui',
-            version: '0.1.0',
+            version: '0.1.1',
             platform: 'electron',
           },
           auth: {
