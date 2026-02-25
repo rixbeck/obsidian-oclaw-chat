@@ -1,0 +1,36 @@
+{
+  "id": "openclaw-channel-obsidian",
+  "name": "OpenClaw Channel - Obsidian",
+  "description": "Bidirectional communication channel for Obsidian (WebSocket + RPC)",
+  "version": "0.1.0",
+  "kind": "channel",
+  "main": "./dist/index.js",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "description": "Enable/disable the Obsidian channel",
+        "default": true
+      },
+      "wsPort": {
+        "type": "integer",
+        "description": "WebSocket server port",
+        "default": 8765
+      },
+      "authToken": {
+        "type": "string",
+        "description": "Gateway auth token (for client authentication)"
+      },
+      "accounts": {
+        "type": "array",
+        "description": "Allowed account IDs",
+        "items": {
+          "type": "string"
+        },
+        "default": ["main", "senilla"]
+      }
+    },
+    "required": ["authToken"]
+  }
+}

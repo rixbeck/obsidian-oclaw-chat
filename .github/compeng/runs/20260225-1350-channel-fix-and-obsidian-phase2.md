@@ -1,9 +1,9 @@
 # Run: Channel Fix + Obsidian Phase 2
 
 **Started:** 2026-02-25 13:50  
-**Completed:** 2026-02-25 14:15  
+**Completed:** 2026-02-25 15:15  
 **Plan:** [.github/compeng/plans/20260225-1350-channel-fix-and-obsidian-phase2.md](.github/compeng/plans/20260225-1350-channel-fix-and-obsidian-phase2.md)  
-**Status:** ✅ Complete
+**Status:** ✅ Complete (incl. must-fix remediation)
 
 ---
 
@@ -136,3 +136,130 @@ Test Files  4 passed (4)
 - [ ] `@review` agent futtatása a Phase 1 + Phase 2 kódon
 - [ ] Streaming response support (Phase 3 terv)
 - [ ] Conversation history perzisztencia (Phase 3 terv)
+
+---
+
+## Must-fix Remediation (Review → WORK loop)
+
+**Review artefact:** `.github/compeng/reviews/20260225-1430-channel-fix-and-obsidian-phase2.md`  
+**8 must-fix issues resolved. Tests: 27/27. TS: 0 errors. Build: 65.4 KB.**
+
+### Fix 1 — OutboundMessage envelope (Issue 1, Critical)
+
+**Problem:** `OutboundMessage` had `content`/`timestamp` at top-level. Obsidian client read `msg.payload?.content` → always `undefined`. Agent→UI direction completely broken at runtime.
+
+**Changes:**
+- `channel-plugin/src/types.ts`: `OutboundMessage.content` moved inside `payload: { content, timestamp }`
+- `channel-plugin/src/rpc.ts`: Both `sendMessage` and `broadcastMessage` build `{ type: 'message', payload: { content, timestamp: Date.now() } }`
+- `obsidian-plugin/src/types.ts`: New `InboundWSPayload` discriminated union with properly typed `message` and `error` variants
+- `obsidian-plugin/src/websocket.ts`: `onMessage` callback now uses `InboundWSPayload`; removed all `as any` casts
+- `obsidian-plugin/src/main.ts`: `msg.payload.content` and `msg.payload.message` fully typed, no casts
+
+**Status:** ✅ Complete
+
+---
+
+### Fix 2 — WS binds to 127.0.0.1 (Issue 2)
+
+**Problem:** `WebSocketServer({ port })` binds to `0.0.0.0` — LAN-exposed.
+
+**Change:** `channel-plugin/src/service.ts`: `new WebSocketServer({ host: '127.0.0.1', port: wsPort })`
+
+**Status:** ✅ Complete
+
+---
+
+### Fix 3 — Session fixation prevention (Issue 3)
+
+**Problem:** Client could supply arbitrary `sessionId` in auth payload to potentially hijack another session's routing.
+
+**Changes:**
+- `channel-plugin/src/service.ts`: `sessionInfo.sessionId` always set to server-generated `clientId`; `message.payload?.sessionId` ignored
+- `channel-plugin/src/service.ts`: Auth success response now includes `{ success: true, sessionId: clientId }` so the Obsidian client knows its actual session ID
+- `obsidian-plugin/src/websocket.ts`: Adopts server-returned `sessionId` after auth success
+- `obsidian-plugin/src/types.ts`: `InboundWSPayload` auth variant updated to include `sessionId?: string`
+
+**Status:** ✅ Complete
+
+---
+
+### Fix 4 — MarkdownRenderer XSS/RCE (Issue 4)
+
+**Problem:** `MarkdownRenderer.render()` on untrusted server content in Electron context enables XSS/RCE via injected HTML/script in markdown.
+
+**Changes:**
+- `obsidian-plugin/src/view.ts`: `MarkdownRenderer` import removed; assistant messages use `el.createSpan({ text: msg.content })` (plain text, HTML-safe)
+
+**Status:** ✅ Complete
+
+---
+
+### Fix 5 — O(N) full re-render per message (Issue 5)
+
+**Problem:** `_renderMessages()` called `messagesEl.empty()` and rebuilt all DOM nodes on every new message — O(N) cost.
+
+**Changes:**
+- `obsidian-plugin/src/chat.ts`: `addMessage()` now fires `onMessageAdded?.(msg)` (new callback); `clear()` fires `onUpdate?.([])`
+- `obsidian-plugin/src/view.ts`: 
+  - `onOpen` subscribes to both `onMessageAdded` (→ `_appendMessage`) and `onUpdate` (→ `_renderMessages` for clear only)
+  - New `_appendMessage(msg)` method: O(1) DOM append, removes `oclaw-placeholder` on first message
+  - `_renderMessages` used only for initial render and full reset; placeholder gets `oclaw-placeholder` class for detection
+  - `onClose` nulls both callbacks
+
+**Status:** ✅ Complete
+
+---
+
+### Fix 6 — Echo test code in production (Issue 6)
+
+**Problem:** `session.ts` else-branch echoed the message back with type `'message'` when `runtime.dispatchToAgent` was unavailable — masked dispatch failures in production.
+
+**Change:** `channel-plugin/src/session.ts`: Replaced echo with a proper `{ type: 'error', payload: { message: 'Agent dispatch unavailable...' } }` response.
+
+**Status:** ✅ Complete
+
+---
+
+### Fix 7 — Fragile DOM access (Issue 7)
+
+**Problem:** `this.containerEl.children[1]` — position dependent, breaks if Obsidian changes view structure.
+
+**Change:** `obsidian-plugin/src/view.ts`: `_buildUI()` now uses `this.contentEl` (stable Obsidian API property).
+
+**Status:** ✅ Complete
+
+---
+
+### Fix 8 — Error payload normalization (Issue 8)
+
+**Problem:** Server sent `payload: 'Invalid token'` (bare string) but client typed `payload` as `Record<string,unknown>` — runtime type error.
+
+**Changes:**
+- `channel-plugin/src/service.ts`: All 3 error sends changed to `payload: { message: '...' }`
+- `obsidian-plugin/src/types.ts`: `InboundWSPayload` error variant: `payload: { message: string }`
+
+**Status:** ✅ Complete
+
+---
+
+### Test & Build Results
+
+| Check | Result |
+|-------|--------|
+| `channel-plugin` tests | ✅ 27/27 passed |
+| `channel-plugin` TS | ✅ 0 errors (implicit via vitest) |
+| `obsidian-plugin` tsc --noEmit | ✅ 0 errors |
+| `obsidian-plugin` build | ✅ main.js 65.4 KB |
+
+**Updated acceptance criteria:**
+
+| Criterion | Status | Notes |
+|-----------|--------|-------|
+| OutboundMessage payload-wrapped | ✅ Done | Issue 1 + updated tests |
+| WS localhost-only binding | ✅ Done | Issue 2 |
+| Session fixation prevented | ✅ Done | Issue 3 + server returns sessionId |
+| No MarkdownRenderer on untrusted content | ✅ Done | Issue 4 |
+| Append-only DOM rendering | ✅ Done | Issue 5 |
+| Echo test code removed | ✅ Done | Issue 6 |
+| `this.contentEl` used | ✅ Done | Issue 7 |
+| Error payload `{ message }` object | ✅ Done | Issue 8 |

@@ -1,0 +1,27 @@
+{
+  "name": "openclaw-channel-obsidian",
+  "version": "0.1.0",
+  "description": "OpenClaw channel plugin for Obsidian integration (WebSocket + RPC)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "author": "Rix Beck",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "vitest",
+    "test:once": "vitest run"
+  },
+  "openclaw": {
+    "extensions": ["./dist/index.js"]
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

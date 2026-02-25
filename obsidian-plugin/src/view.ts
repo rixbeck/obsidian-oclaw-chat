@@ -1,0 +1,196 @@
+import { ItemView, WorkspaceLeaf } from 'obsidian';
+import type OpenClawPlugin from './main';
+import { ChatManager } from './chat';
+import type { ChatMessage } from './types';
+import { AGENT_OPTIONS } from './models';
+import { getActiveNoteContext } from './context';
+
+export const VIEW_TYPE_OPENCLAW_CHAT = 'openclaw-chat';
+
+export class OpenClawChatView extends ItemView {
+  private plugin: OpenClawPlugin;
+  private chatManager: ChatManager;
+
+  // DOM refs
+  private messagesEl!: HTMLElement;
+  private inputEl!: HTMLTextAreaElement;
+  private sendBtn!: HTMLButtonElement;
+  private agentSelect!: HTMLSelectElement;
+  private includeNoteCheckbox!: HTMLInputElement;
+  private statusDot!: HTMLElement;
+
+  constructor(leaf: WorkspaceLeaf, plugin: OpenClawPlugin) {
+    super(leaf);
+    this.plugin = plugin;
+    this.chatManager = plugin.chatManager;
+  }
+
+  getViewType(): string {
+    return VIEW_TYPE_OPENCLAW_CHAT;
+  }
+
+  getDisplayText(): string {
+    return 'OpenClaw Chat';
+  }
+
+  getIcon(): string {
+    return 'message-square';
+  }
+
+  async onOpen(): Promise<void> {
+    this._buildUI();
+
+    // Full re-render on clear / reload
+    this.chatManager.onUpdate = (msgs) => this._renderMessages(msgs);
+    // O(1) append for new messages
+    this.chatManager.onMessageAdded = (msg) => this._appendMessage(msg);
+
+    // Subscribe to WS state changes
+    this.plugin.wsClient.onStateChange = (state) => {
+      const connected = state === 'connected';
+      this.statusDot.toggleClass('connected', connected);
+      this.statusDot.title = `Gateway: ${state}`;
+      this.sendBtn.disabled = !connected;
+    };
+
+    // Reflect current state
+    const connected = this.plugin.wsClient.state === 'connected';
+    this.statusDot.toggleClass('connected', connected);
+    this.sendBtn.disabled = !connected;
+
+    this._renderMessages(this.chatManager.getMessages());
+  }
+
+  async onClose(): Promise<void> {
+    this.chatManager.onUpdate = null;
+    this.chatManager.onMessageAdded = null;
+    this.plugin.wsClient.onStateChange = null;
+  }
+
+  // ── UI construction ───────────────────────────────────────────────────────
+
+  private _buildUI(): void {
+    const root = this.contentEl;
+    root.empty();
+    root.addClass('oclaw-chat-view');
+
+    // ── Header ──
+    const header = root.createDiv({ cls: 'oclaw-header' });
+    header.createSpan({ cls: 'oclaw-header-title', text: 'OpenClaw Chat' });
+    this.statusDot = header.createDiv({ cls: 'oclaw-status-dot' });
+    this.statusDot.title = 'Gateway: disconnected';
+
+    // ── Agent selector ──
+    const agentRow = root.createDiv({ cls: 'oclaw-agent-row' });
+    this.agentSelect = agentRow.createEl('select', { cls: 'oclaw-agent-select' });
+    for (const opt of AGENT_OPTIONS) {
+      const el = this.agentSelect.createEl('option', { value: opt.id, text: opt.label });
+      if (opt.id === this.plugin.settings.defaultAgent) el.selected = true;
+    }
+
+    // ── Messages area ──
+    this.messagesEl = root.createDiv({ cls: 'oclaw-messages' });
+
+    // ── Context row ──
+    const ctxRow = root.createDiv({ cls: 'oclaw-context-row' });
+    this.includeNoteCheckbox = ctxRow.createEl('input', { type: 'checkbox' });
+    this.includeNoteCheckbox.id = 'oclaw-include-note';
+    this.includeNoteCheckbox.checked = this.plugin.settings.includeActiveNote;
+    const ctxLabel = ctxRow.createEl('label', { text: 'Include active note' });
+    ctxLabel.htmlFor = 'oclaw-include-note';
+
+    // ── Input row ──
+    const inputRow = root.createDiv({ cls: 'oclaw-input-row' });
+    this.inputEl = inputRow.createEl('textarea', {
+      cls: 'oclaw-input',
+      placeholder: 'Ask anything…',
+    });
+    this.inputEl.rows = 1;
+
+    this.sendBtn = inputRow.createEl('button', { cls: 'oclaw-send-btn', text: 'Send' });
+
+    // ── Event listeners ──
+    this.sendBtn.addEventListener('click', () => this._handleSend());
+    this.inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        this._handleSend();
+      }
+    });
+    // Auto-resize textarea
+    this.inputEl.addEventListener('input', () => {
+      this.inputEl.style.height = 'auto';
+      this.inputEl.style.height = `${this.inputEl.scrollHeight}px`;
+    });
+  }
+
+  // ── Message rendering ─────────────────────────────────────────────────────
+
+  private _renderMessages(messages: readonly ChatMessage[]): void {
+    this.messagesEl.empty();
+
+    if (messages.length === 0) {
+      this.messagesEl.createEl('p', {
+        text: 'Send a message to start chatting.',
+        cls: 'oclaw-message system oclaw-placeholder',
+      });
+      return;
+    }
+
+    for (const msg of messages) {
+      const el = this.messagesEl.createDiv({ cls: `oclaw-message ${msg.role}` });
+      el.createSpan({ text: msg.content });
+    }
+
+    // Scroll to bottom
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  /** Appends a single message without rebuilding the DOM (O(1)) */
+  private _appendMessage(msg: ChatMessage): void {
+    // Remove empty-state placeholder if present
+    this.messagesEl.querySelector('.oclaw-placeholder')?.remove();
+
+    const el = this.messagesEl.createDiv({ cls: `oclaw-message ${msg.role}` });
+    el.createSpan({ text: msg.content });
+
+    // Scroll to bottom
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  // ── Send handler ──────────────────────────────────────────────────────────
+
+  private async _handleSend(): Promise<void> {
+    const text = this.inputEl.value.trim();
+    if (!text) return;
+
+    const agentId = this.agentSelect.value;
+
+    // Build message context
+    let context: Record<string, string> | undefined;
+    if (this.includeNoteCheckbox.checked) {
+      const note = await getActiveNoteContext(this.app);
+      if (note) {
+        context = { activeNote: note.title, noteContent: note.content };
+      }
+    }
+
+    // Add user message to chat
+    const userMsg = ChatManager.createUserMessage(text);
+    this.chatManager.addMessage(userMsg);
+
+    // Clear input
+    this.inputEl.value = '';
+    this.inputEl.style.height = 'auto';
+
+    // Send over WS
+    this.plugin.wsClient.send({
+      type: 'message',
+      payload: {
+        message: text,
+        agentId,
+        ...(context ? { context } : {}),
+      },
+    });
+  }
+}
