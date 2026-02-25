@@ -5,7 +5,6 @@
  */
 
 import type { GatewayRequestHandlerOptions } from "openclaw/plugin-sdk";
-import { validateToken } from "./auth.js";
 
 interface SubscriptionInfo {
   subscriptionId: string;
@@ -16,7 +15,6 @@ interface SubscriptionInfo {
 }
 
 interface ObsidianGatewayConfig {
-  authToken: string;
   accounts: string[];
 }
 
@@ -52,12 +50,7 @@ export function createSubscribeHandler(config: ObsidianGatewayConfig, logger: Lo
       if (!broadcastToConnIds && context.broadcastToConnIds) {
         setBroadcastFunction(context.broadcastToConnIds);
       }
-      // Validate auth token
-      const token = typeof params?.token === "string" ? params.token : "";
-      if (!validateToken(token, config.authToken)) {
-        respond(false, { error: "Invalid auth token" });
-        return;
-      }
+      // Auth is handled by Gateway connect handshake; no per-channel token needed.
 
       // Extract parameters
       const sessionKey = typeof params?.sessionKey === "string" ? params.sessionKey : "";

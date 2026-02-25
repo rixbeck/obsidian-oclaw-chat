@@ -116,7 +116,6 @@ export class ObsidianWSClient {
         // Step 2: Subscribe to session
         this._setState('subscribing');
         const result = await this._sendRequest('obsidian.subscribe', {
-          token: this.token,
           sessionKey: this.sessionKey,
           accountId: this.accountId,
         });

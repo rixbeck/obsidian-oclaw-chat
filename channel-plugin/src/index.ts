@@ -36,13 +36,7 @@ const plugin: any = {
       return;
     }
 
-    if (!cfg.authToken) {
-      api.logger.error?.("[obsidian] channels.obsidian.authToken is required");
-      return;
-    }
-
     const gatewayConfig = {
-      authToken: cfg.authToken,
       accounts: cfg.accounts ?? ["main"],
     };
 
