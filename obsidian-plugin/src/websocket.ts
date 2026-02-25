@@ -121,9 +121,11 @@ export class ObsidianWSClient {
           client: {
             id: 'gateway-client',
             mode: 'backend',
-            version: '0.1.7',
+            version: '0.1.8',
             platform: 'electron',
           },
+          role: 'operator',
+          scopes: ['operator.write'],
           auth: {
             token: this.token,
           },
