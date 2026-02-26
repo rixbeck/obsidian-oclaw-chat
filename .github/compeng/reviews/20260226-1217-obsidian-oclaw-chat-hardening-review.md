@@ -102,3 +102,9 @@ A small polish is to say “Stop requested…” until the terminal event arrive
 ## Recommendation
 - ✅ **Mergeable** for functionality/security improvements versus previous state.
 - ⚠️ Before release: resolve or explicitly accept+document **dev-dep audit** + add the tiny URL-credential reject.
+
+## Addendum (2026-02-26)
+- The two MUST perf/correctness items from the perf review were fixed on `develop`:
+  - byte-accurate inbound frame size guard across `string|Blob|ArrayBuffer|Uint8Array`
+  - handshake timeout timer cleared on `onclose`/`onerror`
+  - commit: `1bb8f24`
