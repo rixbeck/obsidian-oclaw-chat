@@ -13,7 +13,13 @@ export default class OpenClawPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    this.wsClient = new ObsidianWSClient(this.settings.sessionKey);
+    this.wsClient = new ObsidianWSClient(this.settings.sessionKey, {
+      identityStore: {
+        get: async () => (await this._loadDeviceIdentity()),
+        set: async (identity) => await this._saveDeviceIdentity(identity),
+        clear: async () => await this._clearDeviceIdentity(),
+      },
+    });
     this.chatManager = new ChatManager();
 
     // Wire incoming WS messages → ChatManager
@@ -64,20 +70,50 @@ export default class OpenClawPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const data = (await this.loadData()) ?? {};
+    // NOTE: plugin data may contain extra private fields (e.g. device identity). Settings are the public subset.
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
+    // Preserve any private fields stored in plugin data.
+    const data = (await this.loadData()) ?? {};
+    await this.saveData({ ...data, ...this.settings });
+  }
+
+  // ── Device identity persistence (plugin-scoped; NOT localStorage) ─────────
+
+  async resetDeviceIdentity(): Promise<void> {
+    await this._clearDeviceIdentity();
+    new Notice('OpenClaw Chat: device identity reset. Reconnect to pair again.');
+  }
+
+  private _deviceIdentityKey = '_openclawDeviceIdentityV1';
+
+  private async _loadDeviceIdentity(): Promise<any | null> {
+    const data = (await this.loadData()) ?? {};
+    return (data as any)?.[this._deviceIdentityKey] ?? null;
+  }
+
+  private async _saveDeviceIdentity(identity: any): Promise<void> {
+    const data = (await this.loadData()) ?? {};
+    await this.saveData({ ...data, [this._deviceIdentityKey]: identity });
+  }
+
+  private async _clearDeviceIdentity(): Promise<void> {
+    const data = (await this.loadData()) ?? {};
+    if ((data as any)?.[this._deviceIdentityKey] === undefined) return;
+    const next = { ...(data as any) };
+    delete next[this._deviceIdentityKey];
+    await this.saveData(next);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   private _connectWS(): void {
-    this.wsClient.connect(
-      this.settings.gatewayUrl,
-      this.settings.authToken
-    );
+    this.wsClient.connect(this.settings.gatewayUrl, this.settings.authToken, {
+      allowInsecureWs: this.settings.allowInsecureWs,
+    });
   }
 
   private async _activateChatView(): Promise<void> {

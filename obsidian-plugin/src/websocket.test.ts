@@ -6,10 +6,15 @@ class MockWebSocket {
   bufferedAmount = 0;
   sent: string[] = [];
 
+  shouldThrowOnSend = false;
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(_url: string) {}
 
   send(data: string) {
+    if (this.shouldThrowOnSend) {
+      throw new Error('send failed');
+    }
     this.sent.push(data);
   }
 
@@ -157,6 +162,138 @@ describe('ObsidianWSClient (abort/working state)', () => {
 
     expect((client as any).activeRunId).toBeNull();
     expect(workingCalls[workingCalls.length - 1]).toBe(false);
+  });
+
+  it('ignores terminal event with mismatched runId (does not clear working)', async () => {
+    const client = new ObsidianWSClient('main');
+    (client as any).state = 'connected';
+    (client as any).activeRunId = 'run-A';
+    (client as any)._setWorking(true);
+
+    let msgCount = 0;
+    client.onMessage = () => msgCount++;
+
+    (client as any)._handleChatEventFrame({
+      type: 'event',
+      event: 'chat',
+      payload: {
+        sessionKey: 'agent:main:main',
+        state: 'final',
+        runId: 'run-B',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+      },
+    });
+
+    expect((client as any).activeRunId).toBe('run-A');
+    expect((client as any).working).toBe(true);
+    expect(msgCount).toBe(0);
+  });
+
+  it('aborted clears working even with no message, and does not render', async () => {
+    const client = new ObsidianWSClient('main');
+    (client as any).state = 'connected';
+    (client as any).activeRunId = 'run-A';
+    (client as any)._setWorking(true);
+
+    let msgCount = 0;
+    client.onMessage = () => msgCount++;
+
+    (client as any)._handleChatEventFrame({
+      type: 'event',
+      event: 'chat',
+      payload: {
+        sessionKey: 'agent:main:main',
+        state: 'aborted',
+        runId: 'run-A',
+        message: null,
+      },
+    });
+
+    expect((client as any).activeRunId).toBeNull();
+    expect((client as any).working).toBe(false);
+    expect(msgCount).toBe(0);
+  });
+
+  it('aborted clears working but does not render non-assistant message', async () => {
+    const client = new ObsidianWSClient('main');
+    (client as any).state = 'connected';
+    (client as any).activeRunId = 'run-A';
+    (client as any)._setWorking(true);
+
+    let msgCount = 0;
+    client.onMessage = () => msgCount++;
+
+    (client as any)._handleChatEventFrame({
+      type: 'event',
+      event: 'chat',
+      payload: {
+        sessionKey: 'agent:main:main',
+        state: 'aborted',
+        runId: 'run-A',
+        message: { role: 'user', content: [{ type: 'text', text: 'nope' }] },
+      },
+    });
+
+    expect((client as any).activeRunId).toBeNull();
+    expect((client as any).working).toBe(false);
+    expect(msgCount).toBe(0);
+  });
+
+  it('filters events by sessionKey (mismatch ignored)', async () => {
+    const client = new ObsidianWSClient('main');
+    (client as any).state = 'connected';
+    (client as any).activeRunId = 'run-A';
+    (client as any)._setWorking(true);
+
+    (client as any)._handleChatEventFrame({
+      type: 'event',
+      event: 'chat',
+      payload: {
+        sessionKey: 'agent:other:main',
+        state: 'final',
+        runId: 'run-A',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+      },
+    });
+
+    expect((client as any).activeRunId).toBe('run-A');
+    expect((client as any).working).toBe(true);
+  });
+
+  it('suppresses HEARTBEAT_OK assistant output but still clears working', async () => {
+    const client = new ObsidianWSClient('main');
+    (client as any).state = 'connected';
+    (client as any).activeRunId = 'run-A';
+    (client as any)._setWorking(true);
+
+    let msgCount = 0;
+    client.onMessage = () => msgCount++;
+
+    (client as any)._handleChatEventFrame({
+      type: 'event',
+      event: 'chat',
+      payload: {
+        sessionKey: 'agent:main:main',
+        state: 'final',
+        runId: 'run-A',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'HEARTBEAT_OK' }] },
+      },
+    });
+
+    expect((client as any).activeRunId).toBeNull();
+    expect((client as any).working).toBe(false);
+    expect(msgCount).toBe(0);
+  });
+
+  it('sendMessage cleans up pending request if ws.send throws', async () => {
+    const client = new ObsidianWSClient('main');
+    const ws = new MockWebSocket('ws://test');
+    ws.shouldThrowOnSend = true;
+    (client as any).ws = ws;
+    (client as any).state = 'connected';
+
+    await expect(client.sendMessage('hi')).rejects.toThrow(/send failed/i);
+    expect(((client as any).pendingRequests as Map<string, any>).size).toBe(0);
   });
 
   it('abortActiveRun is idempotent while in-flight (prevents abort spamming)', async () => {

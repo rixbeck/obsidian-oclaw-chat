@@ -12,6 +12,8 @@ export interface OpenClawSettings {
   includeActiveNote: boolean;
   /** Render assistant output as Markdown (unsafe: may trigger embeds/post-processors); default OFF */
   renderAssistantMarkdown: boolean;
+  /** Allow using insecure ws:// for non-local gateway URLs (unsafe); default OFF */
+  allowInsecureWs: boolean;
 }
 
 export const DEFAULT_SETTINGS: OpenClawSettings = {
@@ -21,6 +23,7 @@ export const DEFAULT_SETTINGS: OpenClawSettings = {
   accountId: 'main',
   includeActiveNote: false,
   renderAssistantMarkdown: false,
+  allowInsecureWs: false,
 };
 
 /** A single chat message */

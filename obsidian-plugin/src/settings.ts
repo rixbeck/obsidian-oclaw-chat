@@ -92,6 +92,27 @@ export class OpenClawSettingTab extends PluginSettingTab {
         })
       );
 
+    new Setting(containerEl)
+      .setName('Allow insecure ws:// for non-local gateways (unsafe)')
+      .setDesc(
+        'OFF recommended. If enabled, you can connect to non-local gateways over ws://. This exposes your token and message content to network attackers; prefer wss://.'
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.allowInsecureWs).onChange(async (value) => {
+          this.plugin.settings.allowInsecureWs = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Reset device identity (re-pair)')
+      .setDesc('Clears the stored device identity used for operator.write pairing. Use this if you suspect compromise or see "device identity mismatch".')
+      .addButton((btn) =>
+        btn.setButtonText('Reset').setWarning().onClick(async () => {
+          await this.plugin.resetDeviceIdentity();
+        })
+      );
+
     containerEl.createEl('p', {
       text: 'Reconnect: close and reopen the sidebar after changing the gateway URL or token.',
       cls: 'setting-item-description',

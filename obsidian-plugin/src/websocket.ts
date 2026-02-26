@@ -15,13 +15,44 @@
 
 import type { InboundWSPayload } from './types';
 
-/** Milliseconds before a reconnect attempt after an unexpected close */
-const RECONNECT_DELAY_MS = 3_000;
+function isLocalHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+}
+
+function safeParseWsUrl(url: string):
+  | { ok: true; scheme: 'ws' | 'wss'; host: string }
+  | { ok: false; error: string } {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'ws:' && u.protocol !== 'wss:') {
+      return { ok: false, error: `Gateway URL must be ws:// or wss:// (got ${u.protocol})` };
+    }
+    const scheme = u.protocol === 'ws:' ? 'ws' : 'wss';
+    return { ok: true, scheme, host: u.hostname };
+  } catch {
+    return { ok: false, error: 'Invalid gateway URL' };
+  }
+}
+
 /** Interval for sending heartbeat pings (check connection liveness) */
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
 /** Safety valve: hide working spinner if no assistant reply arrives in time */
 const WORKING_MAX_MS = 120_000;
+
+/** Max inbound frame size to parse (DoS guard) */
+const MAX_INBOUND_FRAME_BYTES = 512 * 1024;
+
+/** Max in-flight requests before fast-failing (DoS/robustness guard) */
+const MAX_PENDING_REQUESTS = 200;
+
+/** Reconnect backoff */
+const RECONNECT_BASE_MS = 3_000;
+const RECONNECT_MAX_MS = 60_000;
+
+/** Handshake deadline waiting for connect.challenge */
+const HANDSHAKE_TIMEOUT_MS = 15_000;
 
 export type WSClientState = 'disconnected' | 'connecting' | 'handshaking' | 'connected';
 
@@ -33,13 +64,19 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout> | null;
 }
 
-type DeviceIdentity = {
+export type DeviceIdentity = {
   id: string;
   publicKey: string; // base64
   privateKeyJwk: JsonWebKey;
 };
 
-const DEVICE_STORAGE_KEY = 'openclawChat.deviceIdentity.v1';
+export interface DeviceIdentityStore {
+  get(): Promise<DeviceIdentity | null>;
+  set(identity: DeviceIdentity): Promise<void>;
+  clear(): Promise<void>;
+}
+
+const DEVICE_STORAGE_KEY = 'openclawChat.deviceIdentity.v1'; // legacy localStorage key (migration only)
 
 function base64UrlEncode(bytes: ArrayBuffer): string {
   const u8 = new Uint8Array(bytes);
@@ -65,13 +102,37 @@ async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
   return hexEncode(digest);
 }
 
-async function loadOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
-  const existing = localStorage.getItem(DEVICE_STORAGE_KEY);
-  if (existing) {
-    const parsed = JSON.parse(existing) as DeviceIdentity;
-    if (parsed?.id && parsed?.publicKey && parsed?.privateKeyJwk) return parsed;
+async function loadOrCreateDeviceIdentity(store?: DeviceIdentityStore): Promise<DeviceIdentity> {
+  // 1) Prefer plugin-scoped storage (injected by main plugin).
+  if (store) {
+    try {
+      const existing = await store.get();
+      if (existing?.id && existing?.publicKey && existing?.privateKeyJwk) return existing;
+    } catch {
+      // ignore and continue (we can always re-generate)
+    }
   }
 
+  // 2) One-time migration: legacy localStorage identity.
+  // NOTE: this remains a risk boundary; we only read+delete for migration.
+  const legacy = localStorage.getItem(DEVICE_STORAGE_KEY);
+  if (legacy) {
+    try {
+      const parsed = JSON.parse(legacy) as DeviceIdentity;
+      if (parsed?.id && parsed?.publicKey && parsed?.privateKeyJwk) {
+        if (store) {
+          await store.set(parsed);
+          localStorage.removeItem(DEVICE_STORAGE_KEY);
+        }
+        return parsed;
+      }
+    } catch {
+      // Corrupt/partial data → delete and re-create.
+      localStorage.removeItem(DEVICE_STORAGE_KEY);
+    }
+  }
+
+  // 3) Create a new identity.
   const keyPair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pubRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
   const privJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
@@ -79,15 +140,20 @@ async function loadOrCreateDeviceIdentity(): Promise<DeviceIdentity> {
   // IMPORTANT: device.id must be a stable fingerprint for the public key.
   // The gateway enforces deviceId ↔ publicKey binding; random ids can cause "device identity mismatch".
   const deviceId = await sha256Hex(pubRaw);
-  const id = deviceId;
 
   const identity: DeviceIdentity = {
-    id,
+    id: deviceId,
     publicKey: base64UrlEncode(pubRaw),
     privateKeyJwk: privJwk,
   };
 
-  localStorage.setItem(DEVICE_STORAGE_KEY, JSON.stringify(identity));
+  if (store) {
+    await store.set(identity);
+  } else {
+    // Fallback (should not happen in real plugin runtime) — keep legacy behavior.
+    localStorage.setItem(DEVICE_STORAGE_KEY, JSON.stringify(identity));
+  }
+
   return identity;
 }
 
@@ -184,14 +250,37 @@ export class ObsidianWSClient {
   onStateChange: ((state: WSClientState) => void) | null = null;
   onWorkingChange: WorkingStateListener | null = null;
 
-  constructor(sessionKey: string) {
+  private identityStore: DeviceIdentityStore | undefined;
+  private allowInsecureWs = false;
+
+  private reconnectAttempt = 0;
+
+  constructor(sessionKey: string, opts?: { identityStore?: DeviceIdentityStore; allowInsecureWs?: boolean }) {
     this.sessionKey = sessionKey;
+    this.identityStore = opts?.identityStore;
+    this.allowInsecureWs = Boolean(opts?.allowInsecureWs);
   }
 
-  connect(url: string, token: string): void {
+  connect(url: string, token: string, opts?: { allowInsecureWs?: boolean }): void {
     this.url = url;
     this.token = token;
+    this.allowInsecureWs = Boolean(opts?.allowInsecureWs ?? this.allowInsecureWs);
     this.intentionalClose = false;
+
+    // Security: block non-local ws:// unless explicitly allowed.
+    const parsed = safeParseWsUrl(url);
+    if (!parsed.ok) {
+      this.onMessage?.({ type: 'error', payload: { message: parsed.error } });
+      return;
+    }
+    if (parsed.scheme === 'ws' && !isLocalHost(parsed.host) && !this.allowInsecureWs) {
+      this.onMessage?.({
+        type: 'error',
+        payload: { message: 'Refusing insecure ws:// to non-local gateway. Use wss:// or enable the unsafe override in settings.' },
+      });
+      return;
+    }
+
     this._connect();
   }
 
@@ -288,7 +377,7 @@ export class ObsidianWSClient {
       connectStarted = true;
 
       try {
-        const identity = await loadOrCreateDeviceIdentity();
+        const identity = await loadOrCreateDeviceIdentity(this.identityStore);
         const signedAtMs = Date.now();
         const payload = buildDeviceAuthPayload({
           deviceId: identity.id,
@@ -302,43 +391,65 @@ export class ObsidianWSClient {
         });
         const sig = await signDevicePayload(identity, payload);
 
-        await this._sendRequest('connect', {
-          minProtocol: 3,
-          maxProtocol: 3,
-          client: {
-            id: 'gateway-client',
-            mode: 'backend',
-            version: '0.1.10',
-            platform: 'electron',
-          },
-          role: 'operator',
-          scopes: ['operator.read', 'operator.write'],
-          device: {
-            id: identity.id,
-            publicKey: identity.publicKey,
-            signature: sig.signature,
-            signedAt: signedAtMs,
-            nonce: connectNonce,
-          },
-          auth: {
-            token: this.token,
-          },
-        });
+        const ack = await this._sendRequest('connect', {
+           minProtocol: 3,
+           maxProtocol: 3,
+           client: {
+             id: 'gateway-client',
+             mode: 'backend',
+             version: '0.1.10',
+             platform: 'electron',
+           },
+           role: 'operator',
+           scopes: ['operator.read', 'operator.write'],
+           device: {
+             id: identity.id,
+             publicKey: identity.publicKey,
+             signature: sig.signature,
+             signedAt: signedAtMs,
+             nonce: connectNonce,
+           },
+           auth: {
+             token: this.token,
+           },
+         });
 
-        this._setState('connected');
-        this._startHeartbeat();
+         this._setState('connected');
+         this.reconnectAttempt = 0;
+         if (handshakeTimer) {
+           clearTimeout(handshakeTimer);
+           handshakeTimer = null;
+         }
+         this._startHeartbeat();
       } catch (err) {
         console.error('[oclaw-ws] Connect handshake failed', err);
         ws.close();
       }
     };
 
+    let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+
     ws.onopen = () => {
       this._setState('handshaking');
       // The gateway will send connect.challenge; connect is sent once we have a nonce.
+      if (handshakeTimer) clearTimeout(handshakeTimer);
+      handshakeTimer = setTimeout(() => {
+        // If we never got the challenge nonce, force reconnect.
+        if (this.state === 'handshaking' && !this.intentionalClose) {
+          console.warn('[oclaw-ws] Handshake timed out waiting for connect.challenge');
+          ws.close();
+        }
+      }, HANDSHAKE_TIMEOUT_MS);
     };
 
     ws.onmessage = (event: MessageEvent) => {
+      // DoS guard: refuse huge frames.
+      if (typeof event.data === 'string' && event.data.length > MAX_INBOUND_FRAME_BYTES) {
+        console.error('[oclaw-ws] Inbound frame too large; closing connection');
+        ws.close();
+        return;
+      }
+
       let frame: any;
       try {
         frame = JSON.parse(event.data as string);
@@ -475,19 +586,30 @@ export class ObsidianWSClient {
         return;
       }
 
+      if (this.pendingRequests.size >= MAX_PENDING_REQUESTS) {
+        reject(new Error(`Too many in-flight requests (${this.pendingRequests.size})`));
+        return;
+      }
+
       const id = `req-${++this.requestId}`;
 
       const pending: PendingRequest = { resolve, reject, timeout: null };
       this.pendingRequests.set(id, pending);
 
-      this.ws.send(
-        JSON.stringify({
-          type: 'req',
-          method,
-          id,
-          params,
-        })
-      );
+      const payload = JSON.stringify({
+        type: 'req',
+        method,
+        id,
+        params,
+      });
+
+      try {
+        this.ws.send(payload);
+      } catch (err) {
+        this.pendingRequests.delete(id);
+        reject(err);
+        return;
+      }
 
       pending.timeout = setTimeout(() => {
         if (this.pendingRequests.has(id)) {
@@ -500,13 +622,20 @@ export class ObsidianWSClient {
 
   private _scheduleReconnect(): void {
     if (this.reconnectTimer !== null) return;
+
+    const attempt = ++this.reconnectAttempt;
+    const exp = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, attempt - 1));
+    // Jitter: 0.5x..1.5x
+    const jitter = 0.5 + Math.random();
+    const delay = Math.floor(exp * jitter);
+
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.intentionalClose) {
-        console.log(`[oclaw-ws] Reconnecting to ${this.url}…`);
+        console.log(`[oclaw-ws] Reconnecting to ${this.url}… (attempt ${attempt}, ${delay}ms)`);
         this._connect();
       }
-    }, RECONNECT_DELAY_MS);
+    }, delay);
   }
 
   private lastBufferedWarnAtMs = 0;
