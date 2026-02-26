@@ -211,7 +211,12 @@ export class OpenClawChatView extends ItemView {
       if (this.suppressSessionSelectChange) return;
       const next = this.sessionSelect.value;
       if (!next || next === this.plugin.settings.sessionKey) return;
-      void this.plugin.switchSession(next);
+      void (async () => {
+        await this.plugin.switchSession(next);
+        await this._refreshSessions();
+        this.sessionSelect.value = next;
+        this.sessionSelect.title = next;
+      })();
     });
 
     // ── Messages area ──
