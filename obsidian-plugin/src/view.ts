@@ -14,6 +14,10 @@ export class OpenClawChatView extends ItemView {
   private isConnected = false;
   private isWorking = false;
 
+  // Connection notices (avoid spam)
+  private lastConnNoticeAtMs = 0;
+  private lastGatewayState: string | null = null;
+
   // DOM refs
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
@@ -49,6 +53,33 @@ export class OpenClawChatView extends ItemView {
 
     // Subscribe to WS state changes
     this.plugin.wsClient.onStateChange = (state) => {
+      // Connection loss / reconnect notices (throttled)
+      const prev = this.lastGatewayState;
+      this.lastGatewayState = state;
+
+      const now = Date.now();
+      const NOTICE_THROTTLE_MS = 60_000;
+
+      const shouldNotify = () => now - this.lastConnNoticeAtMs > NOTICE_THROTTLE_MS;
+      const notify = (text: string) => {
+        if (!shouldNotify()) return;
+        this.lastConnNoticeAtMs = now;
+        new Notice(text);
+      };
+
+      // Only show “lost” if we were previously connected.
+      if (prev === 'connected' && state === 'disconnected') {
+        notify('OpenClaw Chat: connection lost — reconnecting…');
+        // Also append a system message so it’s visible in the chat history.
+        this.chatManager.addMessage(ChatManager.createSystemMessage('⚠ Connection lost — reconnecting…', 'error'));
+      }
+
+      // Optional “reconnected” notice
+      if (prev && prev !== 'connected' && state === 'connected') {
+        notify('OpenClaw Chat: reconnected');
+        this.chatManager.addMessage(ChatManager.createSystemMessage('✅ Reconnected', 'info'));
+      }
+
       this.isConnected = state === 'connected';
       this.statusDot.toggleClass('connected', this.isConnected);
       this.statusDot.title = `Gateway: ${state}`;
@@ -62,6 +93,7 @@ export class OpenClawChatView extends ItemView {
     };
 
     // Reflect current state
+    this.lastGatewayState = this.plugin.wsClient.state;
     this.isConnected = this.plugin.wsClient.state === 'connected';
     this.statusDot.toggleClass('connected', this.isConnected);
     this._updateSendButton();
