@@ -87,8 +87,7 @@ export class OpenClawChatView extends ItemView {
   private sessionMainBtn!: HTMLButtonElement;
   private suppressSessionSelectChange = false;
 
-  private onMessagesClick: ((ev: MouseEvent) => void) | null = null;
-  private onDocClickCapture: ((ev: MouseEvent) => void) | null = null;
+  // (removed) internal-link delegation (handled by post-processing linkify)
 
   constructor(leaf: WorkspaceLeaf, plugin: OpenClawPlugin) {
     super(leaf);
@@ -198,11 +197,7 @@ export class OpenClawChatView extends ItemView {
     this.wsClient.onWorkingChange = null;
     this.wsClient.disconnect();
 
-    if (this.onDocClickCapture) {
-      this.contentEl?.ownerDocument?.removeEventListener('click', this.onDocClickCapture, true);
-      this.onDocClickCapture = null;
-    }
-    this.onMessagesClick = null;
+    // (removed) internal-link delegation cleanup
   }
 
   // ── UI construction ───────────────────────────────────────────────────────
@@ -258,8 +253,9 @@ export class OpenClawChatView extends ItemView {
     // ── Messages area ──
     this.messagesEl = root.createDiv({ cls: 'oclaw-messages' });
 
-    // Delegate internal-link clicks (MarkdownRenderer output) to a reliable openFile handler.
-    this._installInternalLinkDelegation();
+    // Note: markdown-mode linkify is handled post-render via _postprocessAssistantLinks.
+    // We no longer rely on internal-link click delegation.
+
 
     // ── Context row ──
     const ctxRow = root.createDiv({ cls: 'oclaw-context-row' });
@@ -447,7 +443,9 @@ export class OpenClawChatView extends ItemView {
       if (this.plugin.settings.renderAssistantMarkdown) {
         // Best-effort pre-processing: replace known remote paths with wikilinks when the target exists.
         const pre = this._preprocessAssistantMarkdown(msg.content, mappings);
-        void MarkdownRenderer.renderMarkdown(pre, body, sourcePath, this.plugin);
+        void MarkdownRenderer.renderMarkdown(pre, body, sourcePath, this.plugin).then(() => {
+          this._postprocessAssistantLinks(body, msg.content, mappings, sourcePath);
+        });
       } else {
         // Plain mode: build safe, clickable links in DOM (no Markdown rendering).
         this._renderAssistantPlainWithLinks(body, msg.content, mappings, sourcePath);
@@ -486,73 +484,6 @@ export class OpenClawChatView extends ItemView {
     return null;
   }
 
-  private _installInternalLinkDelegation(): void {
-    if (this.onMessagesClick || this.onDocClickCapture) return;
-
-    const OCLAW_OPEN = 'oclaw-open:';
-
-    const handler = (ev: MouseEvent) => {
-      const target = ev.target as HTMLElement | null;
-      if (!target) return;
-
-      // Only handle clicks originating from within our messages container.
-      if (!this.messagesEl?.contains(target)) return;
-
-      const a = target.closest?.('a.internal-link, a[href^="oclaw-open:"]') as HTMLAnchorElement | null;
-      if (!a) return;
-
-      const hrefAttr = a.getAttribute('href') || '';
-      if (hrefAttr.startsWith(OCLAW_OPEN)) {
-        const encoded = hrefAttr.slice(OCLAW_OPEN.length);
-        let vaultPath = '';
-        try {
-          vaultPath = decodeURIComponent(encoded);
-        } catch {
-          vaultPath = encoded;
-        }
-        vaultPath = vaultPath.replace(/^\/+/, '');
-
-        ev.preventDefault();
-        ev.stopPropagation();
-
-        const f = this.app.vault.getAbstractFileByPath(vaultPath);
-        if (f instanceof TFile) {
-          void this.app.workspace.getLeaf(true).openFile(f);
-          return;
-        }
-        void this.app.workspace.openLinkText(vaultPath, this.app.workspace.getActiveFile()?.path ?? '', true);
-        return;
-      }
-
-      // Obsidian-generated internal link
-      const dataHref = a.getAttribute('data-href') || '';
-      const raw = (dataHref || hrefAttr).trim();
-      if (!raw) return;
-
-      // If it is an absolute URL, let the default behavior handle it.
-      if (/^https?:\/\//i.test(raw)) return;
-
-      const vaultPath = raw.replace(/^\/+/, '');
-      const f = this.app.vault.getAbstractFileByPath(vaultPath);
-
-      ev.preventDefault();
-      ev.stopPropagation();
-
-      if (f instanceof TFile) {
-        void this.app.workspace.getLeaf(true).openFile(f);
-        return;
-      }
-
-      void this.app.workspace.openLinkText(vaultPath, this.app.workspace.getActiveFile()?.path ?? '', true);
-    };
-
-    this.onMessagesClick = handler;
-    this.onDocClickCapture = handler;
-
-    // Mac/Obsidian can swallow internal-link events; attach at document capture phase.
-    this.contentEl.ownerDocument.addEventListener('click', handler, true);
-  }
-
   private _tryMapVaultRelativeToken(token: string, mappings: PathMapping[]): string | null {
     const t = token.replace(/^\/+/, '');
     if (this.app.vault.getAbstractFileByPath(t)) return t;
@@ -579,63 +510,111 @@ export class OpenClawChatView extends ItemView {
     return null;
   }
 
-  private _preprocessAssistantMarkdown(text: string, mappings: PathMapping[]): string {
-    // In Markdown mode we still treat assistant output as untrusted.
-    // We do NOT rely on Obsidian's internal-link navigation; instead we emit markdown links
-    // with a custom scheme that our click delegation handles.
-    const OCLAW_OPEN = 'oclaw-open:';
+  private _preprocessAssistantMarkdown(text: string, _mappings: PathMapping[]): string {
+    // Do not inject wikilinks or custom schemes into Markdown.
+    // We'll post-process rendered HTML with the same safe linkify logic as plain mode.
+    return text;
+  }
 
-    const toOpenLink = (display: string, vaultPath: string) => {
-      const safePath = vaultPath.replace(/^\/+/, '');
-      return `[${display}](${OCLAW_OPEN}${encodeURIComponent(safePath)})`;
-    };
+  private _appendObsidianLink(
+    container: HTMLElement,
+    vaultPath: string,
+    sourcePath: string,
+    displayText?: string,
+  ): void {
+    const display = displayText ?? `[[${vaultPath}]]`;
+    const a = container.createEl('a', { text: display, href: '#' });
+    a.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
 
-    const tryResolveVaultPath = (raw: string): string | null => {
-      const direct = this._tryMapVaultRelativeToken(raw, mappings);
-      if (direct) return direct;
-      const mapped = tryMapRemotePathToVaultPath(raw, mappings);
-      if (mapped && this.app.vault.getAbstractFileByPath(mapped)) return mapped;
-      // URL reverse-map
-      const fromUrl = this._tryReverseMapUrlToVaultPath(raw, mappings);
-      if (fromUrl && this.app.vault.getAbstractFileByPath(fromUrl)) return fromUrl;
-      return null;
-    };
+      const f = this.app.vault.getAbstractFileByPath(vaultPath);
+      if (f instanceof TFile) {
+        void this.app.workspace.getLeaf(true).openFile(f);
+        return;
+      }
 
-    // Unwrap wikilinks ONLY when the inner target is a recognizable, existing/mapped vault path.
-    // Otherwise keep as-is (user may have valid wiki links unrelated to our mapping).
-    let normalized = text.replace(/\[\[([^\]]+)\]\]/g, (full, inner) => {
-      const resolved = tryResolveVaultPath(String(inner));
-      if (!resolved) return full;
-      return toOpenLink(String(inner), resolved);
+      void this.app.workspace.openLinkText(vaultPath, sourcePath, true);
     });
+  }
 
-    const candidates = extractCandidates(normalized);
-    if (candidates.length === 0) return normalized;
+  private _postprocessAssistantLinks(
+    body: HTMLElement,
+    rawText: string,
+    mappings: PathMapping[],
+    sourcePath: string,
+  ): void {
+    // Linkify after MarkdownRenderer has produced HTML.
+    // We only transform text nodes, preserving formatting.
+    const candidatesByNode = new Map<Text, ReturnType<typeof extractCandidates>>();
 
-    let out = '';
-    let cursor = 0;
-
-    for (const c of candidates) {
-      out += normalized.slice(cursor, c.start);
-      cursor = c.end;
-
-      if (c.kind === 'url') {
-        const mapped = this._tryReverseMapUrlToVaultPath(c.raw, mappings);
-        out += mapped && this.app.vault.getAbstractFileByPath(mapped) ? toOpenLink(c.raw, mapped) : c.raw;
-        continue;
-      }
-
-      const resolved = tryResolveVaultPath(c.raw);
-      if (!resolved) {
-        out += c.raw;
-        continue;
-      }
-
-      out += toOpenLink(c.raw, resolved);
+    const walker = body.ownerDocument.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+    let n: Node | null;
+    while ((n = walker.nextNode())) {
+      const t = n as Text;
+      if (!t.nodeValue) continue;
+      textNodes.push(t);
     }
 
-    out += normalized.slice(cursor);
-    return out;
+    for (const t of textNodes) {
+      const text = t.nodeValue ?? '';
+      const candidates = extractCandidates(text);
+      if (candidates.length === 0) continue;
+      candidatesByNode.set(t, candidates);
+    }
+
+    const tryReverseMapUrlToVaultPath = (url: string): string | null => this._tryReverseMapUrlToVaultPath(url, mappings);
+
+    for (const [t, candidates] of candidatesByNode.entries()) {
+      const text = t.nodeValue ?? '';
+      const frag = body.ownerDocument.createDocumentFragment();
+      let cursor = 0;
+
+      const appendText = (s: string) => {
+        if (!s) return;
+        frag.appendChild(body.ownerDocument.createTextNode(s));
+      };
+
+      for (const c of candidates) {
+        appendText(text.slice(cursor, c.start));
+        cursor = c.end;
+
+        if (c.kind === 'url') {
+          const mapped = tryReverseMapUrlToVaultPath(c.raw);
+          if (mapped) {
+            this._appendObsidianLink(frag as any, mapped, sourcePath, c.raw);
+          } else {
+            // leave URL as text; renderer likely already created an <a> for it
+            appendText(c.raw);
+          }
+          continue;
+        }
+
+        const direct = this._tryMapVaultRelativeToken(c.raw, mappings);
+        if (direct) {
+          this._appendObsidianLink(frag as any, direct, sourcePath, c.raw);
+          continue;
+        }
+
+        const mapped = tryMapRemotePathToVaultPath(c.raw, mappings);
+        if (mapped && this.app.vault.getAbstractFileByPath(mapped)) {
+          this._appendObsidianLink(frag as any, mapped, sourcePath, c.raw);
+          continue;
+        }
+
+        appendText(c.raw);
+      }
+
+      appendText(text.slice(cursor));
+
+      // Replace the text node.
+      const parent = t.parentNode;
+      if (!parent) continue;
+      parent.replaceChild(frag, t);
+    }
+
+    void rawText;
   }
 
   private _renderAssistantPlainWithLinks(
@@ -657,24 +636,6 @@ export class OpenClawChatView extends ItemView {
       body.appendChild(document.createTextNode(s));
     };
 
-    const appendObsidianLink = (vaultPath: string) => {
-      const display = `[[${vaultPath}]]`;
-      const a = body.createEl('a', { text: display, href: '#' });
-      a.addEventListener('click', (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-
-        const f = this.app.vault.getAbstractFileByPath(vaultPath);
-        if (f instanceof TFile) {
-          void this.app.workspace.getLeaf(true).openFile(f);
-          return;
-        }
-
-        // Fallback: best-effort linktext open.
-        void this.app.workspace.openLinkText(vaultPath, sourcePath, true);
-      });
-    };
-
     const appendExternalUrl = (url: string) => {
       // Let Obsidian/Electron handle external open.
       body.createEl('a', { text: url, href: url });
@@ -689,21 +650,19 @@ export class OpenClawChatView extends ItemView {
       if (c.kind === 'url') {
         const mapped = tryReverseMapUrlToVaultPath(c.raw);
         if (mapped) {
-          appendObsidianLink(mapped);
+          this._appendObsidianLink(body, mapped, sourcePath);
         } else {
           appendExternalUrl(c.raw);
         }
         continue;
       }
 
-      // 1) If token is already a vault-relative path (or can be resolved via vaultBase heuristic), linkify directly.
       const direct = this._tryMapVaultRelativeToken(c.raw, mappings);
       if (direct) {
-        appendObsidianLink(direct);
+        this._appendObsidianLink(body, direct, sourcePath);
         continue;
       }
 
-      // 2) Else: try remote→vault mapping.
       const mapped = tryMapRemotePathToVaultPath(c.raw, mappings);
       if (!mapped) {
         appendText(c.raw);
@@ -715,7 +674,7 @@ export class OpenClawChatView extends ItemView {
         continue;
       }
 
-      appendObsidianLink(mapped);
+      this._appendObsidianLink(body, mapped, sourcePath);
     }
 
     appendText(text.slice(cursor));
