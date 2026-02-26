@@ -96,6 +96,7 @@ export class OpenClawChatView extends ItemView {
     this.lastGatewayState = this.plugin.wsClient.state;
     this.isConnected = this.plugin.wsClient.state === 'connected';
     this.statusDot.toggleClass('connected', this.isConnected);
+    this.statusDot.title = `Gateway: ${this.plugin.wsClient.state}`;
     this._updateSendButton();
 
     this._renderMessages(this.chatManager.getMessages());
