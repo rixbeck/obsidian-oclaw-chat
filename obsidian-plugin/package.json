@@ -1,6 +1,6 @@
 {
   "name": "obsidian-openclaw-chat",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "OpenClaw Chat plugin for Obsidian",
   "private": true,
   "scripts": {
