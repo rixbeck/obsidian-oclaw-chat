@@ -202,7 +202,7 @@
   cursor: pointer;
 }
 
-/* ── Working spinner (Send button) ─────────────────────────────────────── */
+/* ── Working (Send → Stop button) ──────────────────────────────────────── */
 
 .oclaw-send-btn.is-working {
   display: inline-flex;
@@ -211,13 +211,32 @@
   min-width: 56px;
 }
 
-.oclaw-spinner {
-  width: 14px;
-  height: 14px;
+.oclaw-stop-wrap {
+  position: relative;
+  width: 18px;
+  height: 18px;
+}
+
+/* Theme-safe ring: base uses border/muted; active arc uses accent */
+.oclaw-spinner-ring {
+  position: absolute;
+  inset: 0;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: rgba(255, 255, 255, 0.95);
+  border: 2px solid var(--background-modifier-border);
+  border-top-color: var(--interactive-accent);
   animation: oclaw-spin 0.9s linear infinite;
+}
+
+/* Red stop icon in the center */
+.oclaw-stop-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  transform: translate(-50%, -50%);
+  background: var(--color-red);
+  border-radius: 1px;
 }
 
 @keyframes oclaw-spin {

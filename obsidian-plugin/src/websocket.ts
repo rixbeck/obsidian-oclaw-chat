@@ -126,7 +126,7 @@ async function signDevicePayload(identity: DeviceIdentity, payload: string): Pro
   );
 
   const signedAt = Date.now();
-  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, utf8Bytes(payload));
+  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, utf8Bytes(payload) as unknown as BufferSource);
   return { signature: base64UrlEncode(sig), signedAt };
 }
 
@@ -172,6 +172,9 @@ export class ObsidianWSClient {
   private pendingRequests = new Map<string, PendingRequest>();
   private working = false;
 
+  /** The last in-flight chat run id. In OpenClaw WebChat this maps to chat.send idempotencyKey. */
+  private activeRunId: string | null = null;
+
   state: WSClientState = 'disconnected';
 
   onMessage: ((msg: InboundWSPayload) => void) | null = null;
@@ -192,6 +195,7 @@ export class ObsidianWSClient {
   disconnect(): void {
     this.intentionalClose = true;
     this._stopTimers();
+    this.activeRunId = null;
     this._setWorking(false);
     if (this.ws) {
       this.ws.close();
@@ -205,18 +209,40 @@ export class ObsidianWSClient {
       throw new Error('Not connected — call connect() first');
     }
 
-    const idempotencyKey = `obsidian-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const runId = `obsidian-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
     // Show “working” ONLY after the gateway acknowledges the request.
     await this._sendRequest('chat.send', {
       sessionKey: this.sessionKey,
       message,
-      idempotencyKey,
+      idempotencyKey: runId,
       // deliver defaults to true in gateway; keep default
     });
 
+    this.activeRunId = runId;
     this._setWorking(true);
     this._armWorkingSafetyTimeout();
+  }
+
+  /** Abort the active run for this session (and our last run id if present). */
+  async abortActiveRun(): Promise<boolean> {
+    if (this.state !== 'connected') {
+      return false;
+    }
+
+    const runId = this.activeRunId;
+
+    try {
+      await this._sendRequest('chat.abort', runId ? { sessionKey: this.sessionKey, runId } : { sessionKey: this.sessionKey });
+      return true;
+    } catch (err) {
+      console.error('[oclaw-ws] chat.abort failed', err);
+      return false;
+    } finally {
+      // Always restore UI state immediately; the gateway may still emit an aborted event later.
+      this.activeRunId = null;
+      this._setWorking(false);
+    }
   }
 
   private _connect(): void {
@@ -329,20 +355,29 @@ export class ObsidianWSClient {
             return;
           }
 
-          // Avoid double-render: gateway emits delta + final. Render only final.
-          if (payload?.state && payload.state !== 'final') {
+          // Avoid double-render: gateway emits delta + final + aborted. Render only final/aborted.
+          if (payload?.state && payload.state !== 'final' && payload.state !== 'aborted') {
             return;
           }
 
           // We only append assistant output to UI.
           const msg = payload?.message;
           const role = msg?.role ?? 'assistant';
+
+          // Both final and aborted resolve "working".
+          this.activeRunId = null;
+          this._setWorking(false);
+
+          // Aborted may have no assistant message or may carry partial assistant content.
+          if (payload?.state === 'aborted') {
+            // If there's no usable assistant payload, just don't append anything.
+            // (View layer may optionally add a system message on successful stop.)
+            if (!msg) return;
+          }
+
           if (role !== 'assistant') {
             return;
           }
-
-          // First assistant final message ends the “working” state.
-          this._setWorking(false);
 
           const text = extractTextFromGatewayMessage(msg);
           if (!text) return;

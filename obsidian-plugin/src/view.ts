@@ -168,16 +168,21 @@ export class OpenClawChatView extends ItemView {
   }
 
   private _updateSendButton(): void {
-    const disabled = !this.isConnected || this.isWorking;
+    // Disconnected: disable.
+    // Working: keep enabled so user can stop/abort.
+    const disabled = !this.isConnected;
     this.sendBtn.disabled = disabled;
 
     this.sendBtn.toggleClass('is-working', this.isWorking);
     this.sendBtn.setAttr('aria-busy', this.isWorking ? 'true' : 'false');
+    this.sendBtn.setAttr('aria-label', this.isWorking ? 'Stop' : 'Send');
 
     if (this.isWorking) {
-      // Replace button contents with spinner
+      // Replace button contents with Stop icon + spinner ring.
       this.sendBtn.empty();
-      this.sendBtn.createDiv({ cls: 'oclaw-spinner', attr: { 'aria-hidden': 'true' } });
+      const wrap = this.sendBtn.createDiv({ cls: 'oclaw-stop-wrap' });
+      wrap.createDiv({ cls: 'oclaw-spinner-ring', attr: { 'aria-hidden': 'true' } });
+      wrap.createDiv({ cls: 'oclaw-stop-icon', attr: { 'aria-hidden': 'true' } });
     } else {
       // Restore label
       this.sendBtn.setText('Send');
@@ -187,6 +192,18 @@ export class OpenClawChatView extends ItemView {
   // ── Send handler ──────────────────────────────────────────────────────────
 
   private async _handleSend(): Promise<void> {
+    // While working, the button becomes Stop.
+    if (this.isWorking) {
+      const ok = await this.plugin.wsClient.abortActiveRun();
+      if (!ok) {
+        new Notice('OpenClaw Chat: failed to stop');
+        this.chatManager.addMessage(ChatManager.createSystemMessage('⚠ Stop failed', 'error'));
+      } else {
+        this.chatManager.addMessage(ChatManager.createSystemMessage('⛔ Stopped', 'info'));
+      }
+      return;
+    }
+
     const text = this.inputEl.value.trim();
     if (!text) return;
 
