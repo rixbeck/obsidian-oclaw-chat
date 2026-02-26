@@ -237,6 +237,32 @@ export class OpenClawChatView extends ItemView {
     return null;
   }
 
+  private _tryMapVaultRelativeToken(token: string, mappings: PathMapping[]): string | null {
+    const t = token.replace(/^\/+/, '');
+    if (this.app.vault.getAbstractFileByPath(t)) return t;
+
+    // Heuristic: if vaultBase ends with a segment (e.g. workspace/compeng/) and token starts with that segment (compeng/...),
+    // map token under vaultBase.
+    for (const row of mappings) {
+      const vaultBaseRaw = String(row.vaultBase ?? '').trim();
+      if (!vaultBaseRaw) continue;
+      const vaultBase = vaultBaseRaw.endsWith('/') ? vaultBaseRaw : `${vaultBaseRaw}/`;
+
+      const parts = vaultBase.replace(/\/+$/, '').split('/');
+      const baseName = parts[parts.length - 1];
+      if (!baseName) continue;
+
+      const prefix = `${baseName}/`;
+      if (!t.startsWith(prefix)) continue;
+
+      const candidate = `${vaultBase}${t.slice(prefix.length)}`;
+      const normalized = candidate.replace(/^\/+/, '');
+      if (this.app.vault.getAbstractFileByPath(normalized)) return normalized;
+    }
+
+    return null;
+  }
+
   private _preprocessAssistantMarkdown(text: string, mappings: PathMapping[]): string {
     const candidates = extractCandidates(text);
     if (candidates.length === 0) return text;
@@ -255,10 +281,10 @@ export class OpenClawChatView extends ItemView {
         continue;
       }
 
-      // 1) If the token is already a vault-relative path and exists, linkify it directly.
-      const rawVaultPath = c.raw.replace(/^\/+/, '');
-      if (this.app.vault.getAbstractFileByPath(rawVaultPath)) {
-        out += `[[${rawVaultPath}]]`;
+      // 1) If the token is already a vault-relative path (or can be resolved via vaultBase heuristic), linkify it directly.
+      const direct = this._tryMapVaultRelativeToken(c.raw, mappings);
+      if (direct) {
+        out += `[[${direct}]]`;
         continue;
       }
 
@@ -331,10 +357,10 @@ export class OpenClawChatView extends ItemView {
         continue;
       }
 
-      // 1) If token is already a vault-relative path and exists, linkify directly.
-      const rawVaultPath = c.raw.replace(/^\/+/, '');
-      if (this.app.vault.getAbstractFileByPath(rawVaultPath)) {
-        appendObsidianLink(rawVaultPath);
+      // 1) If token is already a vault-relative path (or can be resolved via vaultBase heuristic), linkify directly.
+      const direct = this._tryMapVaultRelativeToken(c.raw, mappings);
+      if (direct) {
+        appendObsidianLink(direct);
         continue;
       }
 
