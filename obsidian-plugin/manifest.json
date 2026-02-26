@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-openclaw-chat",
+  "name": "OpenClaw Chat",
+  "version": "0.2.0",
+  "minAppVersion": "1.0.0",
+  "description": "Chat with OpenClaw AI agents directly from your Obsidian vault",
+  "author": "Rix Beck",
+  "authorUrl": "https://openclaw.ai",
+  "isDesktopOnly": false
+}

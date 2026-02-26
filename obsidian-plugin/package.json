@@ -1,0 +1,17 @@
+{
+  "name": "obsidian-openclaw-chat",
+  "version": "0.1.0",
+  "description": "OpenClaw Chat plugin for Obsidian",
+  "private": true,
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.20.0",
+    "obsidian": "latest",
+    "typescript": "^5.0.0"
+  }
+}
