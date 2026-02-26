@@ -235,7 +235,7 @@
   width: 7px;
   height: 7px;
   transform: translate(-50%, -50%);
-  background: var(--color-red);
+  background: var(--color-red, var(--text-error));
   border-radius: 1px;
 }
 

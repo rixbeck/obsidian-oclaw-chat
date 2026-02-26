@@ -30,6 +30,7 @@ export type WorkingStateListener = (working: boolean) => void;
 interface PendingRequest {
   resolve: (payload: any) => void;
   reject: (error: any) => void;
+  timeout: ReturnType<typeof setTimeout> | null;
 }
 
 type DeviceIdentity = {
@@ -175,6 +176,9 @@ export class ObsidianWSClient {
   /** The last in-flight chat run id. In OpenClaw WebChat this maps to chat.send idempotencyKey. */
   private activeRunId: string | null = null;
 
+  /** Prevents abort spamming: while an abort request is in-flight, reuse the same promise. */
+  private abortInFlight: Promise<boolean> | null = null;
+
   state: WSClientState = 'disconnected';
 
   onMessage: ((msg: InboundWSPayload) => void) | null = null;
@@ -230,19 +234,29 @@ export class ObsidianWSClient {
       return false;
     }
 
+    // Prevent request storms: while one abort is in flight, reuse it.
+    if (this.abortInFlight) {
+      return this.abortInFlight;
+    }
+
     const runId = this.activeRunId;
 
-    try {
-      await this._sendRequest('chat.abort', runId ? { sessionKey: this.sessionKey, runId } : { sessionKey: this.sessionKey });
-      return true;
-    } catch (err) {
-      console.error('[oclaw-ws] chat.abort failed', err);
-      return false;
-    } finally {
-      // Always restore UI state immediately; the gateway may still emit an aborted event later.
-      this.activeRunId = null;
-      this._setWorking(false);
-    }
+    this.abortInFlight = (async () => {
+      try {
+        await this._sendRequest('chat.abort', runId ? { sessionKey: this.sessionKey, runId } : { sessionKey: this.sessionKey });
+        return true;
+      } catch (err) {
+        console.error('[oclaw-ws] chat.abort failed', err);
+        return false;
+      } finally {
+        // Always restore UI state immediately; the gateway may still emit an aborted event later.
+        this.activeRunId = null;
+        this._setWorking(false);
+        this.abortInFlight = null;
+      }
+    })();
+
+    return this.abortInFlight;
   }
 
   private _connect(): void {
@@ -333,6 +347,7 @@ export class ObsidianWSClient {
         const pending = this.pendingRequests.get(frame.id);
         if (pending) {
           this.pendingRequests.delete(frame.id);
+          if (pending.timeout) clearTimeout(pending.timeout);
           if (frame.ok) pending.resolve(frame.payload);
           else pending.reject(new Error(frame.error?.message || 'Request failed'));
         }
@@ -352,6 +367,13 @@ export class ObsidianWSClient {
           const payload = frame.payload;
           const incomingSessionKey = String(payload?.sessionKey || '');
           if (!incomingSessionKey || !sessionKeyMatches(this.sessionKey, incomingSessionKey)) {
+            return;
+          }
+
+          // Best-effort run correlation (if gateway includes a run id). This avoids clearing our UI
+          // based on a different client's run in the same session.
+          const incomingRunId = String(payload?.runId || payload?.idempotencyKey || payload?.meta?.runId || '');
+          if (this.activeRunId && incomingRunId && incomingRunId !== this.activeRunId) {
             return;
           }
 
@@ -399,7 +421,8 @@ export class ObsidianWSClient {
         return;
       }
 
-      console.debug('[oclaw-ws] Unhandled frame', frame);
+      // Avoid logging full frames (may include message content or other sensitive payloads).
+      console.debug('[oclaw-ws] Unhandled frame', { type: frame?.type, event: frame?.event, id: frame?.id });
     };
 
     ws.onclose = () => {
@@ -408,6 +431,7 @@ export class ObsidianWSClient {
       this._setState('disconnected');
 
       for (const pending of this.pendingRequests.values()) {
+        if (pending.timeout) clearTimeout(pending.timeout);
         pending.reject(new Error('Connection closed'));
       }
       this.pendingRequests.clear();
@@ -430,7 +454,9 @@ export class ObsidianWSClient {
       }
 
       const id = `req-${++this.requestId}`;
-      this.pendingRequests.set(id, { resolve, reject });
+
+      const pending: PendingRequest = { resolve, reject, timeout: null };
+      this.pendingRequests.set(id, pending);
 
       this.ws.send(
         JSON.stringify({
@@ -441,7 +467,7 @@ export class ObsidianWSClient {
         })
       );
 
-      setTimeout(() => {
+      pending.timeout = setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
           reject(new Error(`Request timeout: ${method}`));
