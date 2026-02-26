@@ -71,6 +71,43 @@
   line-height: var(--line-height-tight);
 }
 
+/* Message body (Markdown container) */
+.oclaw-message-body {
+  width: 100%;
+}
+
+/* Tidy up markdown spacing inside bubbles */
+.oclaw-message-body p {
+  margin: 0.35em 0;
+}
+
+.oclaw-message-body p:first-child {
+  margin-top: 0;
+}
+
+.oclaw-message-body p:last-child {
+  margin-bottom: 0;
+}
+
+.oclaw-message-body ul,
+.oclaw-message-body ol {
+  margin: 0.35em 0;
+  padding-left: 1.2em;
+}
+
+.oclaw-message-body pre {
+  margin: 0.5em 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-s);
+  overflow-x: auto;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.oclaw-message-body code {
+  font-size: 0.95em;
+}
+
 .oclaw-message.user {
   background: var(--interactive-accent);
   color: var(--text-on-accent);

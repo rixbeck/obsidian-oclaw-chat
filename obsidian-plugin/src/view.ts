@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf } from 'obsidian';
+import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf } from 'obsidian';
 import type OpenClawPlugin from './main';
 import { ChatManager } from './chat';
 import type { ChatMessage } from './types';
@@ -139,9 +139,7 @@ export class OpenClawChatView extends ItemView {
     }
 
     for (const msg of messages) {
-      const levelClass = msg.level ? ` ${msg.level}` : '';
-      const el = this.messagesEl.createDiv({ cls: `oclaw-message ${msg.role}${levelClass}` });
-      el.createSpan({ text: msg.content });
+      this._appendMessage(msg);
     }
 
     // Scroll to bottom
@@ -155,7 +153,15 @@ export class OpenClawChatView extends ItemView {
 
     const levelClass = msg.level ? ` ${msg.level}` : '';
     const el = this.messagesEl.createDiv({ cls: `oclaw-message ${msg.role}${levelClass}` });
-    el.createSpan({ text: msg.content });
+    const body = el.createDiv({ cls: 'oclaw-message-body' });
+
+    // Render assistant messages as Markdown (untrusted content → keep user/system plain)
+    if (msg.role === 'assistant') {
+      const sourcePath = this.app.workspace.getActiveFile()?.path ?? '';
+      void MarkdownRenderer.renderMarkdown(msg.content, body, sourcePath, this.plugin);
+    } else {
+      body.setText(msg.content);
+    }
 
     // Scroll to bottom
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
