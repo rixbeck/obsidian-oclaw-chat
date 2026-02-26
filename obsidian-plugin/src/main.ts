@@ -1,14 +1,13 @@
 import { FileSystemAdapter, Notice, Plugin, WorkspaceLeaf } from 'obsidian';
 import { OpenClawSettingTab } from './settings';
 import { ObsidianWSClient } from './websocket';
-import { ChatManager } from './chat';
 import { VIEW_TYPE_OPENCLAW_CHAT, OpenClawChatView } from './view';
 import { DEFAULT_SETTINGS, type OpenClawSettings } from './types';
 
 export default class OpenClawPlugin extends Plugin {
   settings!: OpenClawSettings;
-  wsClient!: ObsidianWSClient;
-  chatManager!: ChatManager;
+
+  // NOTE: wsClient/chatManager are per-leaf (per view) to allow parallel sessions.
 
   private _vaultHash: string | null = null;
 
@@ -36,32 +35,34 @@ export default class OpenClawPlugin extends Plugin {
     return `agent:main:obsidian:direct:${vaultHash}`;
   }
 
-  async switchSession(sessionKey: string): Promise<void> {
+  getVaultHash(): string | null {
+    return this._vaultHash;
+  }
+
+  getDefaultSessionKey(): string {
+    return (this.settings.sessionKey ?? 'main').trim().toLowerCase();
+  }
+
+  getGatewayConfig(): { url: string; token: string; allowInsecureWs: boolean } {
+    return {
+      url: String(this.settings.gatewayUrl || ''),
+      token: String(this.settings.authToken || ''),
+      allowInsecureWs: Boolean(this.settings.allowInsecureWs),
+    };
+  }
+
+  /** Persist + remember an Obsidian session key for the current vault. */
+  async rememberSessionKey(sessionKey: string): Promise<void> {
     const next = sessionKey.trim().toLowerCase();
-    if (!next) {
-      new Notice('OpenClaw Chat: session key cannot be empty.');
-      return;
-    }
+    if (!next) return;
 
     // Safety: only allow main or canonical obsidian direct sessions.
     if (!(next === 'main' || next.startsWith('agent:main:obsidian:direct:'))) {
-      new Notice('OpenClaw Chat: only main or agent:main:obsidian:direct:* sessions are allowed.');
       return;
     }
 
-    // Abort any in-flight run best-effort (avoid leaking a "working" UI state).
-    try {
-      await this.wsClient.abortActiveRun();
-    } catch {
-      // ignore
-    }
-
-    // Insert divider at the start of the new session.
-    this.chatManager.addMessage(ChatManager.createSessionDivider(next));
-
     this.settings.sessionKey = next;
 
-    // Track known sessions per vault (vault-scoped).
     if (this._vaultHash) {
       const map = this.settings.knownSessionKeysByVault ?? {};
       const cur = Array.isArray(map[this._vaultHash]) ? map[this._vaultHash] : [];
@@ -71,16 +72,16 @@ export default class OpenClawPlugin extends Plugin {
     }
 
     await this.saveSettings();
+  }
 
-    // Reconnect with the new session key.
-    this.wsClient.disconnect();
-    this.wsClient.setSessionKey(next);
-
-    if (this.settings.authToken) {
-      this.wsClient.connect(this.settings.gatewayUrl, this.settings.authToken, {
-        allowInsecureWs: this.settings.allowInsecureWs,
-      });
-    }
+  createWsClient(sessionKey: string): ObsidianWSClient {
+    return new ObsidianWSClient(sessionKey.trim().toLowerCase(), {
+      identityStore: {
+        get: async () => (await this._loadDeviceIdentity()),
+        set: async (identity) => await this._saveDeviceIdentity(identity),
+        clear: async () => await this._clearDeviceIdentity(),
+      },
+    });
   }
 
   async onload(): Promise<void> {
@@ -98,7 +99,9 @@ export default class OpenClawPlugin extends Plugin {
 
       // Remember legacy keys for debugging/migration, but default to canonical.
       if (isLegacy) {
-        const legacy = Array.isArray(this.settings.legacySessionKeys) ? this.settings.legacySessionKeys : [];
+        const legacy = Array.isArray(this.settings.legacySessionKeys)
+          ? this.settings.legacySessionKeys
+          : [];
         this.settings.legacySessionKeys = [existing, ...legacy.filter((k) => k && k !== existing)].slice(0, 20);
       }
 
@@ -114,36 +117,17 @@ export default class OpenClawPlugin extends Plugin {
       }
 
       await this.saveSettings();
+    } else {
+      // Keep working, but New-session creation may be unavailable.
+      new Notice('OpenClaw Chat: could not determine vault identity (vaultHash).');
     }
 
-    this.wsClient = new ObsidianWSClient((this.settings.sessionKey ?? 'main').toLowerCase(), {
-      identityStore: {
-        get: async () => (await this._loadDeviceIdentity()),
-        set: async (identity) => await this._saveDeviceIdentity(identity),
-        clear: async () => await this._clearDeviceIdentity(),
-      },
-    });
-    this.chatManager = new ChatManager();
-
-    // Wire incoming WS messages → ChatManager
-    this.wsClient.onMessage = (msg) => {
-      if (msg.type === 'message') {
-        this.chatManager.addMessage(ChatManager.createAssistantMessage(msg.payload.content));
-      } else if (msg.type === 'error') {
-        const errText = msg.payload.message ?? 'Unknown error from gateway';
-        this.chatManager.addMessage(ChatManager.createSystemMessage(`⚠ ${errText}`, 'error'));
-      }
-    };
-
     // Register the sidebar view
-    this.registerView(
-      VIEW_TYPE_OPENCLAW_CHAT,
-      (leaf: WorkspaceLeaf) => new OpenClawChatView(leaf, this)
-    );
+    this.registerView(VIEW_TYPE_OPENCLAW_CHAT, (leaf: WorkspaceLeaf) => new OpenClawChatView(leaf, this));
 
     // Ribbon icon — opens / reveals the chat sidebar
     this.addRibbonIcon('message-square', 'OpenClaw Chat', () => {
-      this._activateChatView();
+      void this._activateChatView();
     });
 
     // Settings tab
@@ -153,21 +137,13 @@ export default class OpenClawPlugin extends Plugin {
     this.addCommand({
       id: 'open-openclaw-chat',
       name: 'Open chat sidebar',
-      callback: () => this._activateChatView(),
+      callback: () => void this._activateChatView(),
     });
-
-    // Connect to gateway if token is configured
-    if (this.settings.authToken) {
-      this._connectWS();
-    } else {
-      new Notice('OpenClaw Chat: please configure your gateway token in Settings.');
-    }
 
     console.log('[oclaw] Plugin loaded');
   }
 
   async onunload(): Promise<void> {
-    this.wsClient.disconnect();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_OPENCLAW_CHAT);
     console.log('[oclaw] Plugin unloaded');
   }
@@ -212,12 +188,6 @@ export default class OpenClawPlugin extends Plugin {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-
-  private _connectWS(): void {
-    this.wsClient.connect(this.settings.gatewayUrl, this.settings.authToken, {
-      allowInsecureWs: this.settings.allowInsecureWs,
-    });
-  }
 
   private async _activateChatView(): Promise<void> {
     const { workspace } = this.app;

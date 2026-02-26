@@ -4,6 +4,7 @@ import { ChatManager } from './chat';
 import type { ChatMessage, PathMapping } from './types';
 import { extractCandidates, tryMapRemotePathToVaultPath } from './linkify';
 import { getActiveNoteContext } from './context';
+import { ObsidianWSClient } from './websocket';
 
 export const VIEW_TYPE_OPENCLAW_CHAT = 'openclaw-chat';
 
@@ -63,6 +64,7 @@ class NewSessionModal extends Modal {
 export class OpenClawChatView extends ItemView {
   private plugin: OpenClawPlugin;
   private chatManager: ChatManager;
+  private wsClient: ObsidianWSClient;
 
   // State
   private isConnected = false;
@@ -90,7 +92,18 @@ export class OpenClawChatView extends ItemView {
   constructor(leaf: WorkspaceLeaf, plugin: OpenClawPlugin) {
     super(leaf);
     this.plugin = plugin;
-    this.chatManager = plugin.chatManager;
+    this.chatManager = new ChatManager();
+    this.wsClient = this.plugin.createWsClient(this.plugin.getDefaultSessionKey());
+
+    // Wire incoming WS messages → ChatManager (per-leaf)
+    this.wsClient.onMessage = (msg) => {
+      if (msg.type === 'message') {
+        this.chatManager.addMessage(ChatManager.createAssistantMessage(msg.payload.content));
+      } else if (msg.type === 'error') {
+        const errText = msg.payload.message ?? 'Unknown error from gateway';
+        this.chatManager.addMessage(ChatManager.createSystemMessage(`⚠ ${errText}`, 'error'));
+      }
+    };
   }
 
   getViewType(): string {
@@ -113,8 +126,16 @@ export class OpenClawChatView extends ItemView {
     // O(1) append for new messages
     this.chatManager.onMessageAdded = (msg) => this._appendMessage(msg);
 
+    // Connect this leaf's WS client
+    const gw = this.plugin.getGatewayConfig();
+    if (gw.token) {
+      this.wsClient.connect(gw.url, gw.token, { allowInsecureWs: gw.allowInsecureWs });
+    } else {
+      new Notice('OpenClaw Chat: please configure your gateway token in Settings.');
+    }
+
     // Subscribe to WS state changes
-    this.plugin.wsClient.onStateChange = (state) => {
+    this.wsClient.onStateChange = (state) => { 
       // Connection loss / reconnect notices (throttled)
       const prev = this.lastGatewayState;
       this.lastGatewayState = state;
@@ -149,16 +170,16 @@ export class OpenClawChatView extends ItemView {
     };
 
     // Subscribe to “working” (request-in-flight) state
-    this.plugin.wsClient.onWorkingChange = (working) => {
+    this.wsClient.onWorkingChange = (working) => {
       this.isWorking = working;
       this._updateSendButton();
     };
 
     // Reflect current state
-    this.lastGatewayState = this.plugin.wsClient.state;
-    this.isConnected = this.plugin.wsClient.state === 'connected';
+    this.lastGatewayState = this.wsClient.state;
+    this.isConnected = this.wsClient.state === 'connected';
     this.statusDot.toggleClass('connected', this.isConnected);
-    this.statusDot.title = `Gateway: ${this.plugin.wsClient.state}`;
+    this.statusDot.title = `Gateway: ${this.wsClient.state}`;
     this._updateSendButton();
 
     this._renderMessages(this.chatManager.getMessages());
@@ -170,8 +191,9 @@ export class OpenClawChatView extends ItemView {
   async onClose(): Promise<void> {
     this.chatManager.onUpdate = null;
     this.chatManager.onMessageAdded = null;
-    this.plugin.wsClient.onStateChange = null;
-    this.plugin.wsClient.onWorkingChange = null;
+    this.wsClient.onStateChange = null;
+    this.wsClient.onWorkingChange = null;
+    this.wsClient.disconnect();
 
     if (this.onMessagesClick) {
       this.messagesEl?.removeEventListener('click', this.onMessagesClick);
@@ -205,7 +227,7 @@ export class OpenClawChatView extends ItemView {
     this.sessionNewBtn.addEventListener('click', () => void this._promptNewSession());
     this.sessionMainBtn.addEventListener('click', () => {
       void (async () => {
-        await this.plugin.switchSession('main');
+        await this._switchSession('main');
         this._loadKnownSessions();
         this.sessionSelect.value = 'main';
         this.sessionSelect.title = 'main';
@@ -214,9 +236,9 @@ export class OpenClawChatView extends ItemView {
     this.sessionSelect.addEventListener('change', () => {
       if (this.suppressSessionSelectChange) return;
       const next = this.sessionSelect.value;
-      if (!next || next === this.plugin.settings.sessionKey) return;
+      if (!next) return;
       void (async () => {
-        await this.plugin.switchSession(next);
+        await this._switchSession(next);
         this._loadKnownSessions();
         this.sessionSelect.value = next;
         this.sessionSelect.title = next;
@@ -298,6 +320,40 @@ export class OpenClawChatView extends ItemView {
     this._setSessionSelectOptions(keys);
   }
 
+  private async _switchSession(sessionKey: string): Promise<void> {
+    const next = sessionKey.trim().toLowerCase();
+    if (!next) return;
+
+    if (!(next === 'main' || next.startsWith('agent:main:obsidian:direct:'))) {
+      new Notice('OpenClaw Chat: only main or agent:main:obsidian:direct:* sessions are allowed.');
+      return;
+    }
+
+    // Abort any in-flight run best-effort.
+    try {
+      await this.wsClient.abortActiveRun();
+    } catch {
+      // ignore
+    }
+
+    // Divider in this leaf only.
+    this.chatManager.addMessage(ChatManager.createSessionDivider(next));
+
+    // Persist as the default and remember it in the vault-scoped list.
+    await this.plugin.rememberSessionKey(next);
+
+    // Switch WS routing for this leaf.
+    this.wsClient.disconnect();
+    this.wsClient.setSessionKey(next);
+
+    const gw = this.plugin.getGatewayConfig();
+    if (gw.token) {
+      this.wsClient.connect(gw.url, gw.token, { allowInsecureWs: gw.allowInsecureWs });
+    } else {
+      new Notice('OpenClaw Chat: please configure your gateway token in Settings.');
+    }
+  }
+
   private async _promptNewSession(): Promise<void> {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -311,7 +367,7 @@ export class OpenClawChatView extends ItemView {
       }
       const key = `agent:main:obsidian:direct:${vaultHash}-${suffix}`;
       void (async () => {
-        await this.plugin.switchSession(key);
+        await this._switchSession(key);
         this._loadKnownSessions();
         this.sessionSelect.value = key;
         this.sessionSelect.title = key;
@@ -612,7 +668,7 @@ export class OpenClawChatView extends ItemView {
   private async _handleSend(): Promise<void> {
     // While working, the button becomes Stop.
     if (this.isWorking) {
-      const ok = await this.plugin.wsClient.abortActiveRun();
+      const ok = await this.wsClient.abortActiveRun();
       if (!ok) {
         new Notice('OpenClaw Chat: failed to stop');
         this.chatManager.addMessage(ChatManager.createSystemMessage('⚠ Stop failed', 'error'));
@@ -644,7 +700,7 @@ export class OpenClawChatView extends ItemView {
 
     // Send over WS (async)
     try {
-      await this.plugin.wsClient.sendMessage(message);
+      await this.wsClient.sendMessage(message);
     } catch (err) {
       console.error('[oclaw] Send failed', err);
       new Notice(`OpenClaw Chat: send failed (${String(err)})`);
