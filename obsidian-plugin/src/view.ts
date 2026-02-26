@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf } from 'obsidian';
+import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import type OpenClawPlugin from './main';
 import { ChatManager } from './chat';
 import type { ChatMessage, PathMapping } from './types';
@@ -332,6 +332,14 @@ export class OpenClawChatView extends ItemView {
       a.addEventListener('click', (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
+
+        const f = this.app.vault.getAbstractFileByPath(vaultPath);
+        if (f instanceof TFile) {
+          void this.app.workspace.getLeaf(true).openFile(f);
+          return;
+        }
+
+        // Fallback: best-effort linktext open.
         void this.app.workspace.openLinkText(vaultPath, sourcePath, true);
       });
     };
