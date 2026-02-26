@@ -265,10 +265,11 @@ export class OpenClawChatView extends ItemView {
 
     try {
       const res = await this.plugin.wsClient.listSessions({
-        activeMinutes: 60 * 24,
-        limit: 100,
+        // Do NOT filter by activity: we want stable access to older obsidian-* sessions.
+        activeMinutes: 0,
+        limit: 200,
         includeGlobal: false,
-        includeUnknown: false,
+        includeUnknown: true,
       });
 
       const rows = Array.isArray(res?.sessions) ? res.sessions : [];
