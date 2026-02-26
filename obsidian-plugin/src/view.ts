@@ -255,15 +255,21 @@ export class OpenClawChatView extends ItemView {
         continue;
       }
 
-      // First try: direct remote path mapping.
+      // 1) If the token is already a vault-relative path and exists, linkify it directly.
+      const rawVaultPath = c.raw.replace(/^\/+/, '');
+      if (this.app.vault.getAbstractFileByPath(rawVaultPath)) {
+        out += `[[${rawVaultPath}]]`;
+        continue;
+      }
+
+      // 2) Else: try remote→vault mapping.
       const mapped = tryMapRemotePathToVaultPath(c.raw, mappings);
       if (!mapped) {
         out += c.raw;
         continue;
       }
 
-      const exists = Boolean(this.app.vault.getAbstractFileByPath(mapped));
-      if (!exists) {
+      if (!this.app.vault.getAbstractFileByPath(mapped)) {
         out += c.raw;
         continue;
       }
@@ -325,6 +331,14 @@ export class OpenClawChatView extends ItemView {
         continue;
       }
 
+      // 1) If token is already a vault-relative path and exists, linkify directly.
+      const rawVaultPath = c.raw.replace(/^\/+/, '');
+      if (this.app.vault.getAbstractFileByPath(rawVaultPath)) {
+        appendObsidianLink(rawVaultPath);
+        continue;
+      }
+
+      // 2) Else: try remote→vault mapping.
       const mapped = tryMapRemotePathToVaultPath(c.raw, mappings);
       if (!mapped) {
         appendText(c.raw);
