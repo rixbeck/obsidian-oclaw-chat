@@ -14,7 +14,17 @@ export interface OpenClawSettings {
   renderAssistantMarkdown: boolean;
   /** Allow using insecure ws:// for non-local gateway URLs (unsafe); default OFF */
   allowInsecureWs: boolean;
+
+  /** Optional: map remote FS paths / exported paths back to vault-relative paths */
+  pathMappings: PathMapping[];
 }
+
+export type PathMapping = {
+  /** Vault-relative base path (e.g. "docs/" or "compeng/") */
+  vaultBase: string;
+  /** Remote FS base path (e.g. "/home/wall-e/.openclaw/workspace/docs/") */
+  remoteBase: string;
+};
 
 export const DEFAULT_SETTINGS: OpenClawSettings = {
   gatewayUrl: 'ws://localhost:18789',
@@ -24,6 +34,7 @@ export const DEFAULT_SETTINGS: OpenClawSettings = {
   includeActiveNote: false,
   renderAssistantMarkdown: false,
   allowInsecureWs: false,
+  pathMappings: [],
 };
 
 /** A single chat message */

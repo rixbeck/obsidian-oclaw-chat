@@ -1,7 +1,8 @@
 import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf } from 'obsidian';
 import type OpenClawPlugin from './main';
 import { ChatManager } from './chat';
-import type { ChatMessage } from './types';
+import type { ChatMessage, PathMapping } from './types';
+import { extractCandidates, tryMapRemotePathToVaultPath } from './linkify';
 import { getActiveNoteContext } from './context';
 
 export const VIEW_TYPE_OPENCLAW_CHAT = 'openclaw-chat';
@@ -190,15 +191,151 @@ export class OpenClawChatView extends ItemView {
 
     // Treat assistant output as UNTRUSTED by default.
     // Rendering as Obsidian Markdown can trigger embeds and other plugins' post-processors.
-    if (msg.role === 'assistant' && this.plugin.settings.renderAssistantMarkdown) {
+    if (msg.role === 'assistant') {
+      const mappings: PathMapping[] = this.plugin.settings.pathMappings ?? [];
       const sourcePath = this.app.workspace.getActiveFile()?.path ?? '';
-      void MarkdownRenderer.renderMarkdown(msg.content, body, sourcePath, this.plugin);
+
+      if (this.plugin.settings.renderAssistantMarkdown) {
+        // Best-effort pre-processing: replace known remote paths with wikilinks when the target exists.
+        const pre = this._preprocessAssistantMarkdown(msg.content, mappings);
+        void MarkdownRenderer.renderMarkdown(pre, body, sourcePath, this.plugin);
+      } else {
+        // Plain mode: build safe, clickable links in DOM (no Markdown rendering).
+        this._renderAssistantPlainWithLinks(body, msg.content, mappings, sourcePath);
+      }
     } else {
       body.setText(msg.content);
     }
 
     // Scroll to bottom
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  private _preprocessAssistantMarkdown(text: string, mappings: PathMapping[]): string {
+    const candidates = extractCandidates(text);
+    if (candidates.length === 0) return text;
+
+    let out = '';
+    let cursor = 0;
+
+    for (const c of candidates) {
+      out += text.slice(cursor, c.start);
+      cursor = c.end;
+
+      if (c.kind === 'url') {
+        // Keep URLs as-is in Markdown mode. (Reverse mapping is handled in plain mode.)
+        out += c.raw;
+        continue;
+      }
+
+      const mapped = tryMapRemotePathToVaultPath(c.raw, mappings);
+      if (!mapped) {
+        out += c.raw;
+        continue;
+      }
+
+      const exists = Boolean(this.app.vault.getAbstractFileByPath(mapped));
+      if (!exists) {
+        out += c.raw;
+        continue;
+      }
+
+      out += `[[${mapped}]]`;
+    }
+
+    out += text.slice(cursor);
+    return out;
+  }
+
+  private _renderAssistantPlainWithLinks(
+    body: HTMLElement,
+    text: string,
+    mappings: PathMapping[],
+    sourcePath: string,
+  ): void {
+    const candidates = extractCandidates(text);
+    if (candidates.length === 0) {
+      body.setText(text);
+      return;
+    }
+
+    let cursor = 0;
+
+    const appendText = (s: string) => {
+      if (!s) return;
+      body.appendChild(document.createTextNode(s));
+    };
+
+    const appendObsidianLink = (vaultPath: string) => {
+      const display = `[[${vaultPath}]]`;
+      const a = body.createEl('a', { text: display, href: '#' });
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        void this.app.workspace.openLinkText(vaultPath, sourcePath, true);
+      });
+    };
+
+    const appendExternalUrl = (url: string) => {
+      // Let Obsidian/Electron handle external open.
+      body.createEl('a', { text: url, href: url });
+    };
+
+    const tryReverseMapUrlToVaultPath = (url: string): string | null => {
+      // FS-based mapping; best-effort only.
+      let decoded = url;
+      try {
+        decoded = decodeURIComponent(url);
+      } catch {
+        // ignore
+      }
+
+      // If the decoded URL contains a remoteBase substring, try mapping from that point.
+      for (const row of mappings) {
+        const remoteBase = String(row.remoteBase ?? '');
+        if (!remoteBase) continue;
+        const idx = decoded.indexOf(remoteBase);
+        if (idx < 0) continue;
+
+        // Extract from remoteBase onward until a terminator.
+        const tail = decoded.slice(idx);
+        const token = tail.split(/[\s'"<>)]/)[0];
+        const mapped = tryMapRemotePathToVaultPath(token, mappings);
+        if (mapped && this.app.vault.getAbstractFileByPath(mapped)) return mapped;
+      }
+
+      return null;
+    };
+
+    for (const c of candidates) {
+      appendText(text.slice(cursor, c.start));
+      cursor = c.end;
+
+      if (c.kind === 'url') {
+        const mapped = tryReverseMapUrlToVaultPath(c.raw);
+        if (mapped) {
+          appendObsidianLink(mapped);
+        } else {
+          appendExternalUrl(c.raw);
+        }
+        continue;
+      }
+
+      const mapped = tryMapRemotePathToVaultPath(c.raw, mappings);
+      if (!mapped) {
+        appendText(c.raw);
+        continue;
+      }
+
+      if (!this.app.vault.getAbstractFileByPath(mapped)) {
+        appendText(c.raw);
+        continue;
+      }
+
+      appendObsidianLink(mapped);
+    }
+
+    appendText(text.slice(cursor));
   }
 
   private _updateSendButton(): void {

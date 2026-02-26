@@ -113,6 +113,66 @@ export class OpenClawSettingTab extends PluginSettingTab {
         })
       );
 
+    // ── Path mappings ──
+    containerEl.createEl('h3', { text: 'Path mappings (vault base → remote base)' });
+    containerEl.createEl('p', {
+      text: 'Used to convert assistant file references (remote FS paths or exported URLs) into clickable Obsidian links. First match wins. Only creates a link if the mapped vault file exists.',
+      cls: 'setting-item-description',
+    });
+
+    const mappings = this.plugin.settings.pathMappings ?? [];
+
+    const rerender = async () => {
+      await this.plugin.saveSettings();
+      this.display();
+    };
+
+    mappings.forEach((row, idx) => {
+      const s = new Setting(containerEl)
+        .setName(`Mapping #${idx + 1}`)
+        .setDesc('vaultBase → remoteBase');
+
+      s.addText((t) =>
+        t
+          .setPlaceholder('vault base (e.g. docs/)')
+          .setValue(row.vaultBase ?? '')
+          .onChange(async (v) => {
+            this.plugin.settings.pathMappings[idx].vaultBase = v;
+            await this.plugin.saveSettings();
+          })
+      );
+
+      s.addText((t) =>
+        t
+          .setPlaceholder('remote base (e.g. /home/.../docs/)')
+          .setValue(row.remoteBase ?? '')
+          .onChange(async (v) => {
+            this.plugin.settings.pathMappings[idx].remoteBase = v;
+            await this.plugin.saveSettings();
+          })
+      );
+
+      s.addExtraButton((b) =>
+        b
+          .setIcon('trash')
+          .setTooltip('Remove mapping')
+          .onClick(async () => {
+            this.plugin.settings.pathMappings.splice(idx, 1);
+            await rerender();
+          })
+      );
+    });
+
+    new Setting(containerEl)
+      .setName('Add mapping')
+      .setDesc('Add a new vaultBase → remoteBase mapping row.')
+      .addButton((btn) =>
+        btn.setButtonText('Add').onClick(async () => {
+          this.plugin.settings.pathMappings.push({ vaultBase: '', remoteBase: '' });
+          await rerender();
+        })
+      );
+
     containerEl.createEl('p', {
       text: 'Reconnect: close and reopen the sidebar after changing the gateway URL or token.',
       cls: 'setting-item-description',
