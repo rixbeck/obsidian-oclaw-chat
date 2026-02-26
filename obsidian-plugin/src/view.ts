@@ -88,6 +88,7 @@ export class OpenClawChatView extends ItemView {
   private suppressSessionSelectChange = false;
 
   private onMessagesClick: ((ev: MouseEvent) => void) | null = null;
+  private onDocClickCapture: ((ev: MouseEvent) => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: OpenClawPlugin) {
     super(leaf);
@@ -197,10 +198,11 @@ export class OpenClawChatView extends ItemView {
     this.wsClient.onWorkingChange = null;
     this.wsClient.disconnect();
 
-    if (this.onMessagesClick) {
-      this.messagesEl?.removeEventListener('click', this.onMessagesClick, true);
-      this.onMessagesClick = null;
+    if (this.onDocClickCapture) {
+      this.contentEl?.ownerDocument?.removeEventListener('click', this.onDocClickCapture, true);
+      this.onDocClickCapture = null;
     }
+    this.onMessagesClick = null;
   }
 
   // ── UI construction ───────────────────────────────────────────────────────
@@ -485,23 +487,26 @@ export class OpenClawChatView extends ItemView {
   }
 
   private _installInternalLinkDelegation(): void {
-    if (this.onMessagesClick) return;
+    if (this.onMessagesClick || this.onDocClickCapture) return;
 
-    this.onMessagesClick = (ev: MouseEvent) => {
+    const handler = (ev: MouseEvent) => {
       const target = ev.target as HTMLElement | null;
-      const a = target?.closest?.('a.internal-link') as HTMLAnchorElement | null;
+      if (!target) return;
+
+      // Only handle clicks originating from within our messages container.
+      if (!this.messagesEl?.contains(target)) return;
+
+      const a = target.closest?.('a.internal-link') as HTMLAnchorElement | null;
       if (!a) return;
 
       const dataHref = a.getAttribute('data-href') || '';
       const hrefAttr = a.getAttribute('href') || '';
-
       const raw = (dataHref || hrefAttr).trim();
       if (!raw) return;
 
       // If it is an absolute URL, let the default behavior handle it.
       if (/^https?:\/\//i.test(raw)) return;
 
-      // Obsidian internal-link often uses vault-relative path.
       const vaultPath = raw.replace(/^\/+/, '');
       const f = this.app.vault.getAbstractFileByPath(vaultPath);
 
@@ -513,12 +518,14 @@ export class OpenClawChatView extends ItemView {
         return;
       }
 
-      // Fallback: let Obsidian resolve linktext (best-effort).
       void this.app.workspace.openLinkText(vaultPath, this.app.workspace.getActiveFile()?.path ?? '', true);
     };
 
-    // Use capture to ensure we catch clicks even if Obsidian/default handlers stop propagation.
-    this.messagesEl.addEventListener('click', this.onMessagesClick, true);
+    this.onMessagesClick = handler;
+    this.onDocClickCapture = handler;
+
+    // Mac/Obsidian can swallow internal-link events; attach at document capture phase.
+    this.contentEl.ownerDocument.addEventListener('click', handler, true);
   }
 
   private _tryMapVaultRelativeToken(token: string, mappings: PathMapping[]): string | null {
