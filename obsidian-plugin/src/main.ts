@@ -27,7 +27,11 @@ export default class OpenClawPlugin extends Plugin {
     // Insert divider at the start of the new session.
     this.chatManager.addMessage(ChatManager.createSessionDivider(next));
 
+    // Persist + remember as a recent Obsidian session key.
     this.settings.sessionKey = next;
+    const recent = Array.isArray(this.settings.recentSessionKeys) ? this.settings.recentSessionKeys : [];
+    const nextRecent = [next, ...recent.filter((k) => k && k !== next)].slice(0, 20);
+    this.settings.recentSessionKeys = nextRecent;
     await this.saveSettings();
 
     // Reconnect with the new session key.

@@ -243,7 +243,8 @@ export class OpenClawChatView extends ItemView {
     this.sessionSelect.empty();
 
     const current = this.plugin.settings.sessionKey;
-    const unique = Array.from(new Set([current, ...keys].filter(Boolean)));
+    const recent = Array.isArray(this.plugin.settings.recentSessionKeys) ? this.plugin.settings.recentSessionKeys : [];
+    const unique = Array.from(new Set([current, ...recent, ...keys].filter(Boolean)));
 
     for (const key of unique) {
       const opt = this.sessionSelect.createEl('option', { value: key, text: key });
@@ -271,7 +272,13 @@ export class OpenClawChatView extends ItemView {
       });
 
       const rows = Array.isArray(res?.sessions) ? res.sessions : [];
-      const obsidianOnly = rows.filter((r) => r && (r.channel === 'obsidian' || String(r.key).includes(':obsidian:')));
+      const obsidianOnly = rows.filter((r) => {
+        if (!r) return false;
+        const key = String(r.key || '');
+        // Our plugin-created sessions are typically simple keys like "obsidian-YYYYMMDD-HHMM".
+        if (key.startsWith('obsidian-')) return true;
+        return r.channel === 'obsidian' || key.includes(':obsidian:');
+      });
       const keys = obsidianOnly.map((r) => r.key).filter(Boolean);
       this._setSessionSelectOptions(keys);
     } catch (err) {

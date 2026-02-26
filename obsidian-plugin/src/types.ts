@@ -17,6 +17,9 @@ export interface OpenClawSettings {
 
   /** Optional: map remote FS paths / exported paths back to vault-relative paths */
   pathMappings: PathMapping[];
+
+  /** Recent session keys (used to keep a stable Obsidian-only session picker). */
+  recentSessionKeys: string[];
 }
 
 export type PathMapping = {
@@ -35,6 +38,7 @@ export const DEFAULT_SETTINGS: OpenClawSettings = {
   renderAssistantMarkdown: false,
   allowInsecureWs: false,
   pathMappings: [],
+  recentSessionKeys: [],
 };
 
 /** A single chat message */
