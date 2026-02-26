@@ -79,6 +79,7 @@ export class OpenClawChatView extends ItemView {
   private sessionRefreshBtn!: HTMLButtonElement;
   private sessionNewBtn!: HTMLButtonElement;
   private sessionMainBtn!: HTMLButtonElement;
+  private suppressSessionSelectChange = false;
 
   private onMessagesClick: ((ev: MouseEvent) => void) | null = null;
 
@@ -198,8 +199,16 @@ export class OpenClawChatView extends ItemView {
 
     this.sessionRefreshBtn.addEventListener('click', () => void this._refreshSessions());
     this.sessionNewBtn.addEventListener('click', () => void this._promptNewSession());
-    this.sessionMainBtn.addEventListener('click', () => void this.plugin.switchSession('main'));
+    this.sessionMainBtn.addEventListener('click', () => {
+      void (async () => {
+        await this.plugin.switchSession('main');
+        await this._refreshSessions();
+        this.sessionSelect.value = 'main';
+        this.sessionSelect.title = 'main';
+      })();
+    });
     this.sessionSelect.addEventListener('change', () => {
+      if (this.suppressSessionSelectChange) return;
       const next = this.sessionSelect.value;
       if (!next || next === this.plugin.settings.sessionKey) return;
       void this.plugin.switchSession(next);
@@ -245,27 +254,36 @@ export class OpenClawChatView extends ItemView {
   }
 
   private _setSessionSelectOptions(keys: string[]): void {
-    this.sessionSelect.empty();
+    this.suppressSessionSelectChange = true;
+    try {
+      this.sessionSelect.empty();
 
-    const current = this.plugin.settings.sessionKey;
-    const recent = Array.isArray(this.plugin.settings.recentSessionKeys) ? this.plugin.settings.recentSessionKeys : [];
+      const current = this.plugin.settings.sessionKey;
+      const recent = Array.isArray(this.plugin.settings.recentSessionKeys) ? this.plugin.settings.recentSessionKeys : [];
 
-    const allowed = (k: string) => k === 'main' || k.startsWith('obsidian-') || k.includes(':obsidian:');
+      const allowed = (k: string) => k === 'main' || k.startsWith('obsidian-') || k.includes(':obsidian:');
 
-    let unique = Array.from(new Set([current, ...recent, ...keys].filter(Boolean)));
-    unique = unique.filter((k) => allowed(String(k)));
+      let unique = Array.from(new Set([current, ...recent, ...keys].filter(Boolean)));
+      unique = unique.filter((k) => allowed(String(k)));
 
-    // If we have no Obsidian sessions at all, ensure "main" is present as a safe baseline.
-    if (unique.length === 0) {
-      unique = ['main'];
+      // If we have no Obsidian sessions at all, ensure "main" is present as a safe baseline.
+      if (unique.length === 0) {
+        unique = ['main'];
+      }
+
+      for (const key of unique) {
+        const opt = this.sessionSelect.createEl('option', { value: key, text: key });
+        if (key === current) opt.selected = true;
+      }
+
+      // Force select to current after rebuilding options (avoid UI drifting to a stale value).
+      if (unique.includes(current)) {
+        this.sessionSelect.value = current;
+      }
+      this.sessionSelect.title = current;
+    } finally {
+      this.suppressSessionSelectChange = false;
     }
-
-    for (const key of unique) {
-      const opt = this.sessionSelect.createEl('option', { value: key, text: key });
-      if (key === current) opt.selected = true;
-    }
-
-    this.sessionSelect.title = current;
   }
 
   private async _refreshSessions(): Promise<void> {
