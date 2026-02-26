@@ -344,13 +344,7 @@ export class ObsidianWSClient {
 
       // Responses
       if (frame.type === 'res') {
-        const pending = this.pendingRequests.get(frame.id);
-        if (pending) {
-          this.pendingRequests.delete(frame.id);
-          if (pending.timeout) clearTimeout(pending.timeout);
-          if (frame.ok) pending.resolve(frame.payload);
-          else pending.reject(new Error(frame.error?.message || 'Request failed'));
-        }
+        this._handleResponseFrame(frame);
         return;
       }
 
@@ -364,59 +358,7 @@ export class ObsidianWSClient {
         }
 
         if (frame.event === 'chat') {
-          const payload = frame.payload;
-          const incomingSessionKey = String(payload?.sessionKey || '');
-          if (!incomingSessionKey || !sessionKeyMatches(this.sessionKey, incomingSessionKey)) {
-            return;
-          }
-
-          // Best-effort run correlation (if gateway includes a run id). This avoids clearing our UI
-          // based on a different client's run in the same session.
-          const incomingRunId = String(payload?.runId || payload?.idempotencyKey || payload?.meta?.runId || '');
-          if (this.activeRunId && incomingRunId && incomingRunId !== this.activeRunId) {
-            return;
-          }
-
-          // Avoid double-render: gateway emits delta + final + aborted. Render only final/aborted.
-          if (payload?.state && payload.state !== 'final' && payload.state !== 'aborted') {
-            return;
-          }
-
-          // We only append assistant output to UI.
-          const msg = payload?.message;
-          const role = msg?.role ?? 'assistant';
-
-          // Both final and aborted resolve "working".
-          this.activeRunId = null;
-          this._setWorking(false);
-
-          // Aborted may have no assistant message or may carry partial assistant content.
-          if (payload?.state === 'aborted') {
-            // If there's no usable assistant payload, just don't append anything.
-            // (View layer may optionally add a system message on successful stop.)
-            if (!msg) return;
-          }
-
-          if (role !== 'assistant') {
-            return;
-          }
-
-          const text = extractTextFromGatewayMessage(msg);
-          if (!text) return;
-
-          // Optional: hide heartbeat acks (noise in UI)
-          if (text.trim() === 'HEARTBEAT_OK') {
-            return;
-          }
-
-          this.onMessage?.({
-            type: 'message',
-            payload: {
-              content: text,
-              role: 'assistant',
-              timestamp: Date.now(),
-            },
-          });
+          this._handleChatEventFrame(frame);
         }
         return;
       }
@@ -444,6 +386,73 @@ export class ObsidianWSClient {
     ws.onerror = (ev: Event) => {
       console.error('[oclaw-ws] WebSocket error', ev);
     };
+  }
+
+  private _handleResponseFrame(frame: any): void {
+    const pending = this.pendingRequests.get(frame.id);
+    if (!pending) return;
+
+    this.pendingRequests.delete(frame.id);
+    if (pending.timeout) clearTimeout(pending.timeout);
+
+    if (frame.ok) pending.resolve(frame.payload);
+    else pending.reject(new Error(frame.error?.message || 'Request failed'));
+  }
+
+  private _handleChatEventFrame(frame: any): void {
+    const payload = frame.payload;
+    const incomingSessionKey = String(payload?.sessionKey || '');
+    if (!incomingSessionKey || !sessionKeyMatches(this.sessionKey, incomingSessionKey)) {
+      return;
+    }
+
+    // Best-effort run correlation (if gateway includes a run id). This avoids clearing our UI
+    // based on a different client's run in the same session.
+    const incomingRunId = String(payload?.runId || payload?.idempotencyKey || payload?.meta?.runId || '');
+    if (this.activeRunId && incomingRunId && incomingRunId !== this.activeRunId) {
+      return;
+    }
+
+    // Avoid double-render: gateway emits delta + final + aborted. Render only final/aborted.
+    if (payload?.state && payload.state !== 'final' && payload.state !== 'aborted') {
+      return;
+    }
+
+    // We only append assistant output to UI.
+    const msg = payload?.message;
+    const role = msg?.role ?? 'assistant';
+
+    // Both final and aborted resolve "working".
+    this.activeRunId = null;
+    this._setWorking(false);
+
+    // Aborted may have no assistant message or may carry partial assistant content.
+    if (payload?.state === 'aborted') {
+      // If there's no usable assistant payload, just don't append anything.
+      // (View layer may optionally add a system message on successful stop.)
+      if (!msg) return;
+    }
+
+    if (role !== 'assistant') {
+      return;
+    }
+
+    const text = extractTextFromGatewayMessage(msg);
+    if (!text) return;
+
+    // Optional: hide heartbeat acks (noise in UI)
+    if (text.trim() === 'HEARTBEAT_OK') {
+      return;
+    }
+
+    this.onMessage?.({
+      type: 'message',
+      payload: {
+        content: text,
+        role: 'assistant',
+        timestamp: Date.now(),
+      },
+    });
   }
 
   private _sendRequest(method: string, params: any): Promise<any> {
