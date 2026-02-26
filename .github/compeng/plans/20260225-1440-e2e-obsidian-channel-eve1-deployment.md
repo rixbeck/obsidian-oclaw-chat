@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 priority: high
 tags: [e2e, deployment, testing, eve-1, obsidian-channel, obsidian-plugin]
 owner: Rix

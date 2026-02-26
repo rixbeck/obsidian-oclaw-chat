@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 priority: high
 tags: [compeng, repo-hygiene, workflow, vscode]
 owner: Rix

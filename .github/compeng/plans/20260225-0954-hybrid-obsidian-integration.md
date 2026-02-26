@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 priority: high
 tags: [obsidian, channel-plugin, community-plugin, hybrid-architecture, websocket, gateway-rpc]
 owner: Rix

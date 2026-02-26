@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 priority: medium
 tags: [obsidian-plugin, ux, progress, gateway, websocket]
 owner: Rix

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 priority: high
 tags: [obsidian, channel-plugin, rpc-fix, phase2, obsidian-community-plugin]
 owner: Rix
