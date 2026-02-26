@@ -3,11 +3,30 @@ import { OpenClawSettingTab } from './settings';
 import { ObsidianWSClient } from './websocket';
 import { VIEW_TYPE_OPENCLAW_CHAT, OpenClawChatView } from './view';
 import { DEFAULT_SETTINGS, type OpenClawSettings } from './types';
+import { migrateSettingsForVault } from './session';
 
 export default class OpenClawPlugin extends Plugin {
   settings!: OpenClawSettings;
 
   // NOTE: wsClient/chatManager are per-leaf (per view) to allow parallel sessions.
+  private openChatLeaves = 0;
+  private lastLeafWarnAtMs = 0;
+  private static MAX_CHAT_LEAVES = 3;
+
+  registerChatLeaf(): void {
+    this.openChatLeaves += 1;
+    const now = Date.now();
+    if (this.openChatLeaves > OpenClawPlugin.MAX_CHAT_LEAVES && now - this.lastLeafWarnAtMs > 60_000) {
+      this.lastLeafWarnAtMs = now;
+      new Notice(
+        `OpenClaw Chat: ${this.openChatLeaves} chat views are open. This may increase gateway load.`
+      );
+    }
+  }
+
+  unregisterChatLeaf(): void {
+    this.openChatLeaves = Math.max(0, this.openChatLeaves - 1);
+  }
 
   private _vaultHash: string | null = null;
 
@@ -31,9 +50,7 @@ export default class OpenClawPlugin extends Plugin {
     return null;
   }
 
-  private _canonicalVaultSessionKey(vaultHash: string): string {
-    return `agent:main:obsidian:direct:${vaultHash}`;
-  }
+  // canonical session key helpers live in src/session.ts
 
   getVaultHash(): string | null {
     return this._vaultHash;
@@ -56,9 +73,16 @@ export default class OpenClawPlugin extends Plugin {
     const next = sessionKey.trim().toLowerCase();
     if (!next) return;
 
-    // Safety: only allow main or canonical obsidian direct sessions.
-    if (!(next === 'main' || next.startsWith('agent:main:obsidian:direct:'))) {
-      return;
+    // SEC: allow only vault-scoped keys (when vaultHash known) or main.
+    const vaultHash = this._vaultHash;
+    if (vaultHash) {
+      const prefix = `agent:main:obsidian:direct:${vaultHash}`;
+      if (!(next === 'main' || next === prefix || next.startsWith(prefix + '-'))) {
+        return;
+      }
+    } else {
+      // Without a vault identity, only allow main.
+      if (next !== 'main') return;
     }
 
     this.settings.sessionKey = next;
@@ -92,30 +116,8 @@ export default class OpenClawPlugin extends Plugin {
     if (this._vaultHash) {
       this.settings.vaultHash = this._vaultHash;
 
-      const canonical = this._canonicalVaultSessionKey(this._vaultHash);
-      const existing = (this.settings.sessionKey ?? '').trim().toLowerCase();
-      const isLegacy = existing.startsWith('obsidian-');
-      const isEmptyOrMain = !existing || existing === 'main' || existing === 'agent:main:main';
-
-      // Remember legacy keys for debugging/migration, but default to canonical.
-      if (isLegacy) {
-        const legacy = Array.isArray(this.settings.legacySessionKeys)
-          ? this.settings.legacySessionKeys
-          : [];
-        this.settings.legacySessionKeys = [existing, ...legacy.filter((k) => k && k !== existing)].slice(0, 20);
-      }
-
-      if (isLegacy || isEmptyOrMain) {
-        this.settings.sessionKey = canonical;
-      }
-
-      const map = this.settings.knownSessionKeysByVault ?? {};
-      const cur = Array.isArray(map[this._vaultHash]) ? map[this._vaultHash] : [];
-      if (!cur.includes(canonical)) {
-        map[this._vaultHash] = [canonical, ...cur].slice(0, 20);
-        this.settings.knownSessionKeysByVault = map;
-      }
-
+      const migrated = migrateSettingsForVault(this.settings, this._vaultHash);
+      this.settings = migrated.nextSettings;
       await this.saveSettings();
     } else {
       // Keep working, but New-session creation may be unavailable.

@@ -119,6 +119,7 @@ export class OpenClawChatView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    this.plugin.registerChatLeaf();
     this._buildUI();
 
     // Full re-render on clear / reload
@@ -189,6 +190,7 @@ export class OpenClawChatView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.plugin.unregisterChatLeaf();
     this.chatManager.onUpdate = null;
     this.chatManager.onMessageAdded = null;
     this.wsClient.onStateChange = null;
@@ -224,7 +226,13 @@ export class OpenClawChatView extends ItemView {
     this.sessionMainBtn = sessRow.createEl('button', { cls: 'oclaw-session-btn', text: 'Main' });
 
     this.sessionRefreshBtn.addEventListener('click', () => this._loadKnownSessions());
-    this.sessionNewBtn.addEventListener('click', () => void this._promptNewSession());
+    this.sessionNewBtn.addEventListener('click', () => {
+      if (!this.plugin.getVaultHash()) {
+        new Notice('OpenClaw Chat: New session is unavailable (missing vault identity).');
+        return;
+      }
+      void this._promptNewSession();
+    });
     this.sessionMainBtn.addEventListener('click', () => {
       void (async () => {
         await this._switchSession('main');
@@ -317,16 +325,34 @@ export class OpenClawChatView extends ItemView {
     const vaultHash = (this.plugin.settings.vaultHash ?? '').trim();
     const map = this.plugin.settings.knownSessionKeysByVault ?? {};
     const keys = vaultHash && Array.isArray(map[vaultHash]) ? map[vaultHash] : [];
-    this._setSessionSelectOptions(keys);
+
+    const prefix = vaultHash ? `agent:main:obsidian:direct:${vaultHash}` : '';
+    const filtered = vaultHash
+      ? keys.filter((k) => {
+          const key = String(k || '').trim().toLowerCase();
+          return key === prefix || key.startsWith(prefix + '-');
+        })
+      : [];
+
+    this._setSessionSelectOptions(filtered);
   }
 
   private async _switchSession(sessionKey: string): Promise<void> {
     const next = sessionKey.trim().toLowerCase();
     if (!next) return;
 
-    if (!(next === 'main' || next.startsWith('agent:main:obsidian:direct:'))) {
-      new Notice('OpenClaw Chat: only main or agent:main:obsidian:direct:* sessions are allowed.');
-      return;
+    const vaultHash = this.plugin.getVaultHash();
+    if (vaultHash) {
+      const prefix = `agent:main:obsidian:direct:${vaultHash}`;
+      if (!(next === 'main' || next === prefix || next.startsWith(prefix + '-'))) {
+        new Notice('OpenClaw Chat: session key must match this vault.');
+        return;
+      }
+    } else {
+      if (next !== 'main') {
+        new Notice('OpenClaw Chat: cannot switch sessions (missing vault identity).');
+        return;
+      }
     }
 
     // Abort any in-flight run best-effort.
