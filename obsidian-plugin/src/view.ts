@@ -225,7 +225,7 @@ export class OpenClawChatView extends ItemView {
 
       const rows = Array.isArray(res?.sessions) ? res.sessions : [];
       const obsidianOnly = rows.filter((r) => r && (r.channel === 'obsidian' || String(r.key).includes(':obsidian:')));
-      const keys = (obsidianOnly.length ? obsidianOnly : rows).map((r) => r.key).filter(Boolean);
+      const keys = obsidianOnly.map((r) => r.key).filter(Boolean);
       this._setSessionSelectOptions(keys);
     } catch (err) {
       console.error('[oclaw] sessions.list failed', err);
