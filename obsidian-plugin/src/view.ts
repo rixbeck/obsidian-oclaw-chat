@@ -211,6 +211,32 @@ export class OpenClawChatView extends ItemView {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
 
+  private _tryReverseMapUrlToVaultPath(url: string, mappings: PathMapping[]): string | null {
+    // FS-based mapping; best-effort only.
+    let decoded = url;
+    try {
+      decoded = decodeURIComponent(url);
+    } catch {
+      // ignore
+    }
+
+    // If the decoded URL contains a remoteBase substring, try mapping from that point.
+    for (const row of mappings) {
+      const remoteBase = String(row.remoteBase ?? '');
+      if (!remoteBase) continue;
+      const idx = decoded.indexOf(remoteBase);
+      if (idx < 0) continue;
+
+      // Extract from remoteBase onward until a terminator.
+      const tail = decoded.slice(idx);
+      const token = tail.split(/[\s'"<>)]/)[0];
+      const mapped = tryMapRemotePathToVaultPath(token, mappings);
+      if (mapped && this.app.vault.getAbstractFileByPath(mapped)) return mapped;
+    }
+
+    return null;
+  }
+
   private _preprocessAssistantMarkdown(text: string, mappings: PathMapping[]): string {
     const candidates = extractCandidates(text);
     if (candidates.length === 0) return text;
@@ -223,11 +249,13 @@ export class OpenClawChatView extends ItemView {
       cursor = c.end;
 
       if (c.kind === 'url') {
-        // Keep URLs as-is in Markdown mode. (Reverse mapping is handled in plain mode.)
-        out += c.raw;
+        // URLs remain URLs UNLESS we can safely map to an existing vault file.
+        const mapped = this._tryReverseMapUrlToVaultPath(c.raw, mappings);
+        out += mapped ? `[[${mapped}]]` : c.raw;
         continue;
       }
 
+      // First try: direct remote path mapping.
       const mapped = tryMapRemotePathToVaultPath(c.raw, mappings);
       if (!mapped) {
         out += c.raw;
@@ -281,31 +309,7 @@ export class OpenClawChatView extends ItemView {
       body.createEl('a', { text: url, href: url });
     };
 
-    const tryReverseMapUrlToVaultPath = (url: string): string | null => {
-      // FS-based mapping; best-effort only.
-      let decoded = url;
-      try {
-        decoded = decodeURIComponent(url);
-      } catch {
-        // ignore
-      }
-
-      // If the decoded URL contains a remoteBase substring, try mapping from that point.
-      for (const row of mappings) {
-        const remoteBase = String(row.remoteBase ?? '');
-        if (!remoteBase) continue;
-        const idx = decoded.indexOf(remoteBase);
-        if (idx < 0) continue;
-
-        // Extract from remoteBase onward until a terminator.
-        const tail = decoded.slice(idx);
-        const token = tail.split(/[\s'"<>)]/)[0];
-        const mapped = tryMapRemotePathToVaultPath(token, mappings);
-        if (mapped && this.app.vault.getAbstractFileByPath(mapped)) return mapped;
-      }
-
-      return null;
-    };
+    const tryReverseMapUrlToVaultPath = (url: string): string | null => this._tryReverseMapUrlToVaultPath(url, mappings);
 
     for (const c of candidates) {
       appendText(text.slice(cursor, c.start));

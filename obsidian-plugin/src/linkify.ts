@@ -26,9 +26,13 @@ export type Candidate = { start: number; end: number; raw: string; kind: 'url' |
 
 // Conservative extraction: aim to avoid false positives.
 const URL_RE = /https?:\/\/[^\s<>()]+/g;
-// Absolute unix-ish paths or relative paths containing at least one '/'.
+// Absolute unix-ish paths.
 // (We still existence-check before producing a link.)
-const PATH_RE = /(?:\/[A-Za-z0-9._~!$&'()*+,;=:@%\-]+)+(?:\.[A-Za-z0-9._-]+)?/g;
+const PATH_RE = /(?<![A-Za-z0-9._-])(?:\/[A-Za-z0-9._~!$&'()*+,;=:@%\-]+)+(?:\.[A-Za-z0-9._-]+)?/g;
+
+// Conservative relative paths with at least one '/', e.g. compeng/plans/x.md
+// Avoids matching scheme-like tokens via negative lookahead for '://'.
+const REL_PATH_RE = /\b(?![A-Za-z][A-Za-z0-9+.-]*:\/\/)[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?:\.[A-Za-z0-9._-]+)?\b/g;
 
 export function extractCandidates(text: string): Candidate[] {
   const t = String(text ?? '');
@@ -47,6 +51,17 @@ export function extractCandidates(text: string): Candidate[] {
     const end = start + m[0].length;
     const overlapsUrl = out.some((c) => c.kind === 'url' && !(end <= c.start || start >= c.end));
     if (overlapsUrl) continue;
+
+    out.push({ start, end, raw: m[0], kind: 'path' });
+  }
+
+  for (const m of t.matchAll(REL_PATH_RE)) {
+    if (m.index === undefined) continue;
+
+    const start = m.index;
+    const end = start + m[0].length;
+    const overlapsExisting = out.some((c) => !(end <= c.start || start >= c.end));
+    if (overlapsExisting) continue;
 
     out.push({ start, end, raw: m[0], kind: 'path' });
   }

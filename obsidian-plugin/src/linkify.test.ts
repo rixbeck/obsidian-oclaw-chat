@@ -30,11 +30,17 @@ describe('linkify', () => {
     expect(tryMapRemotePathToVaultPath('/remote/base/x.md', mappings)).toBeNull();
   });
 
-  it('extractCandidates finds urls and paths (no url overlaps)', () => {
+  it('extractCandidates finds urls and absolute paths (no url overlaps)', () => {
     const s = 'See https://example.com/a/b and /home/user/file.md';
     const c = extractCandidates(s);
 
     expect(c.some((x) => x.kind === 'url' && x.raw === 'https://example.com/a/b')).toBe(true);
     expect(c.some((x) => x.kind === 'path' && x.raw === '/home/user/file.md')).toBe(true);
+  });
+
+  it('extractCandidates finds relative paths', () => {
+    const s = 'See compeng/plans/20260226-1716-obsidian-path-mapping-linkify.md for details.';
+    const c = extractCandidates(s);
+    expect(c.some((x) => x.kind === 'path' && x.raw === 'compeng/plans/20260226-1716-obsidian-path-mapping-linkify.md')).toBe(true);
   });
 });
