@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from 'obsidian';
+import { ItemView, MarkdownRenderer, Modal, Notice, Setting, TFile, WorkspaceLeaf } from 'obsidian';
 import type OpenClawPlugin from './main';
 import { ChatManager } from './chat';
 import type { ChatMessage, PathMapping } from './types';
@@ -6,6 +6,50 @@ import { extractCandidates, tryMapRemotePathToVaultPath } from './linkify';
 import { getActiveNoteContext } from './context';
 
 export const VIEW_TYPE_OPENCLAW_CHAT = 'openclaw-chat';
+
+class NewSessionModal extends Modal {
+  private initialValue: string;
+  private onSubmit: (value: string) => void;
+
+  constructor(view: OpenClawChatView, initialValue: string, onSubmit: (value: string) => void) {
+    super(view.app);
+    this.initialValue = initialValue;
+    this.onSubmit = onSubmit;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl('h3', { text: 'New session key' });
+
+    let value = this.initialValue;
+
+    new Setting(contentEl)
+      .setName('Session key')
+      .setDesc('Tip: keep it Obsidian-specific (e.g. obsidian-YYYYMMDD-HHMM).')
+      .addText((t) => {
+        t.setValue(value);
+        t.onChange((v) => {
+          value = v;
+        });
+      });
+
+    new Setting(contentEl)
+      .addButton((b) => {
+        b.setButtonText('Cancel');
+        b.onClick(() => this.close());
+      })
+      .addButton((b) => {
+        b.setCta();
+        b.setButtonText('Create');
+        b.onClick(() => {
+          this.onSubmit(value);
+          this.close();
+        });
+      });
+  }
+}
 
 export class OpenClawChatView extends ItemView {
   private plugin: OpenClawPlugin;
@@ -29,6 +73,7 @@ export class OpenClawChatView extends ItemView {
   private sessionSelect!: HTMLSelectElement;
   private sessionRefreshBtn!: HTMLButtonElement;
   private sessionNewBtn!: HTMLButtonElement;
+  private sessionMainBtn!: HTMLButtonElement;
 
   private onMessagesClick: ((ev: MouseEvent) => void) | null = null;
 
@@ -144,9 +189,11 @@ export class OpenClawChatView extends ItemView {
     this.sessionSelect = sessRow.createEl('select', { cls: 'oclaw-session-select' });
     this.sessionRefreshBtn = sessRow.createEl('button', { cls: 'oclaw-session-btn', text: 'Refresh' });
     this.sessionNewBtn = sessRow.createEl('button', { cls: 'oclaw-session-btn', text: 'New…' });
+    this.sessionMainBtn = sessRow.createEl('button', { cls: 'oclaw-session-btn', text: 'Main' });
 
     this.sessionRefreshBtn.addEventListener('click', () => void this._refreshSessions());
     this.sessionNewBtn.addEventListener('click', () => void this._promptNewSession());
+    this.sessionMainBtn.addEventListener('click', () => void this.plugin.switchSession('main'));
     this.sessionSelect.addEventListener('change', () => {
       const next = this.sessionSelect.value;
       if (!next || next === this.plugin.settings.sessionKey) return;
@@ -238,11 +285,13 @@ export class OpenClawChatView extends ItemView {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const suggested = `obsidian-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
-    const next = window.prompt('New session key', suggested);
-    if (!next) return;
-    await this.plugin.switchSession(next);
-    // Update dropdown selection best-effort.
-    this._setSessionSelectOptions([]);
+
+    const modal = new NewSessionModal(this, suggested, (value) => {
+      void this.plugin.switchSession(value);
+      // Update dropdown selection best-effort.
+      this._setSessionSelectOptions([]);
+    });
+    modal.open();
   }
 
   // ── Message rendering ─────────────────────────────────────────────────────
