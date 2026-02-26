@@ -1,3 +1,4 @@
+obsidian-plugin/node_modules/
 obsidian-plugin/node_modules/.package-lock.json
 obsidian-plugin/node_modules/.bin/esbuild
 obsidian-plugin/node_modules/.bin/tsc
