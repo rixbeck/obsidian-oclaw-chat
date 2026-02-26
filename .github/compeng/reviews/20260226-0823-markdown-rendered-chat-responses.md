@@ -25,7 +25,11 @@ A megoldás várhatóan javítja a UX-et (listák, code blockok, kiemelés), és
 
 ## Must-fix
 
-1) **CompEng státuszok konzisztenciája**
+- Nincs.
+
+## Should-fix
+
+1) **CompEng státuszok konzisztenciája (workflow hygiene)**
    - A Plan frontmatter még `status: draft`.
    - A Run frontmatter még `status: in-progress`.
 
@@ -33,9 +37,9 @@ A megoldás várhatóan javítja a UX-et (listák, code blockok, kiemelés), és
    - Plan: `approved` (mert explicit jóváhagytad: “Approved: Work!”)
    - Run: `done` (ha a manuális teszt is megvolt), vagy minimum `in-review`
 
-   (Ez workflow hygiene, de hosszú távon sokat számít a követhetőségben.)
+   Megjegyzés: ez **CompEng-related**, nem a feature működésének blokkere; akkor érdemes szigorítani, ha a csapat kifejezetten így akarja enforce-olni.
 
-## Should-fix
+2) **Markdown render guardrail: wikilink/embe d kockázat**
 
 1) **Markdown render guardrail: wikilink/embe d kockázat**
    - Obsidian Markdown támogat `![[embed]]`, wikilinkeket, és bizonyos plugin-ek mellett ezek erős képességek.
