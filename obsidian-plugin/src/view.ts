@@ -44,7 +44,12 @@ class NewSessionModal extends Modal {
         b.setCta();
         b.setButtonText('Create');
         b.onClick(() => {
-          this.onSubmit(value);
+          const v = value.trim();
+          if (!v.startsWith('obsidian-')) {
+            new Notice('Session key must start with "obsidian-"');
+            return;
+          }
+          this.onSubmit(v);
           this.close();
         });
       });
@@ -244,7 +249,16 @@ export class OpenClawChatView extends ItemView {
 
     const current = this.plugin.settings.sessionKey;
     const recent = Array.isArray(this.plugin.settings.recentSessionKeys) ? this.plugin.settings.recentSessionKeys : [];
-    const unique = Array.from(new Set([current, ...recent, ...keys].filter(Boolean)));
+
+    const allowed = (k: string) => k === 'main' || k.startsWith('obsidian-') || k.includes(':obsidian:');
+
+    let unique = Array.from(new Set([current, ...recent, ...keys].filter(Boolean)));
+    unique = unique.filter((k) => allowed(String(k)));
+
+    // If we have no Obsidian sessions at all, ensure "main" is present as a safe baseline.
+    if (unique.length === 0) {
+      unique = ['main'];
+    }
 
     for (const key of unique) {
       const opt = this.sessionSelect.createEl('option', { value: key, text: key });
