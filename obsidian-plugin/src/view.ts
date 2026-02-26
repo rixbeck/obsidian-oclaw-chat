@@ -26,6 +26,8 @@ export class OpenClawChatView extends ItemView {
   private includeNoteCheckbox!: HTMLInputElement;
   private statusDot!: HTMLElement;
 
+  private onMessagesClick: ((ev: MouseEvent) => void) | null = null;
+
   constructor(leaf: WorkspaceLeaf, plugin: OpenClawPlugin) {
     super(leaf);
     this.plugin = plugin;
@@ -108,6 +110,11 @@ export class OpenClawChatView extends ItemView {
     this.chatManager.onMessageAdded = null;
     this.plugin.wsClient.onStateChange = null;
     this.plugin.wsClient.onWorkingChange = null;
+
+    if (this.onMessagesClick) {
+      this.messagesEl?.removeEventListener('click', this.onMessagesClick);
+      this.onMessagesClick = null;
+    }
   }
 
   // ── UI construction ───────────────────────────────────────────────────────
@@ -125,6 +132,9 @@ export class OpenClawChatView extends ItemView {
 
     // ── Messages area ──
     this.messagesEl = root.createDiv({ cls: 'oclaw-messages' });
+
+    // Delegate internal-link clicks (MarkdownRenderer output) to a reliable openFile handler.
+    this._installInternalLinkDelegation();
 
     // ── Context row ──
     const ctxRow = root.createDiv({ cls: 'oclaw-context-row' });
@@ -235,6 +245,36 @@ export class OpenClawChatView extends ItemView {
     }
 
     return null;
+  }
+
+  private _installInternalLinkDelegation(): void {
+    if (this.onMessagesClick) return;
+
+    this.onMessagesClick = (ev: MouseEvent) => {
+      const target = ev.target as HTMLElement | null;
+      const a = target?.closest?.('a.internal-link') as HTMLAnchorElement | null;
+      if (!a) return;
+
+      const dataHref = a.getAttribute('data-href') || '';
+      const hrefAttr = a.getAttribute('href') || '';
+
+      const raw = (dataHref || hrefAttr).trim();
+      if (!raw) return;
+
+      // If it is an absolute URL, let the default behavior handle it.
+      if (/^https?:\/\//i.test(raw)) return;
+
+      // Obsidian internal-link often uses vault-relative path.
+      const vaultPath = raw.replace(/^\/+/, '');
+      const f = this.app.vault.getAbstractFileByPath(vaultPath);
+      if (!(f instanceof TFile)) return;
+
+      ev.preventDefault();
+      ev.stopPropagation();
+      void this.app.workspace.getLeaf(true).openFile(f);
+    };
+
+    this.messagesEl.addEventListener('click', this.onMessagesClick);
   }
 
   private _tryMapVaultRelativeToken(token: string, mappings: PathMapping[]): string | null {
