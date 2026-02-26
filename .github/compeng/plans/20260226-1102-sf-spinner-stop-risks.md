@@ -1,7 +1,10 @@
 ---
-status: approved
+status: done
 priority: high
 tags: [obsidian, openclaw, plugin, sf]
+implemented_commits: [b490722, 843f439, 9c3f1c5, 416655d]
+run_artifact: ../runs/20260226-1104-sf-spinner-stop-risks.md
+note: "This SF plan is completed. Remaining risks (device identity storage, ws/wss policy, DoS caps, liveness/backoff, contract formalization) are handled by a follow-up plan."
 ---
 
 # SF Plan — Obsidian OpenClaw Chat: mitigate Stop/abort risks
