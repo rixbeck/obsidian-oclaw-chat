@@ -8,8 +8,8 @@ estimated_hours: 1-2
 issue: inline
 related:
   - .github/compeng/plans/20260225-1440-e2e-obsidian-channel-eve1-deployment.md
-  - compeng/reviews/20260225-2146-obsidian-oclaw-chat.md
-  - compeng/reviews/20260225-2336-obsidian-oclaw-chat-followup.md
+  - .github/compeng/reviews/20260225-2146-obsidian-oclaw-chat.md
+  - .github/compeng/reviews/20260225-2336-obsidian-oclaw-chat-followup.md
 ---
 
 # Plan — Obsidian OpenClaw Chat: “agent is working” progress visual feedback
@@ -33,8 +33,8 @@ Vezessünk be egy **progress/working indikátort** a UI-ban:
 
 ## 1) Prior art / tanulságok (CompEng knowledge)
 
-- **Unbounded / beragadó állapotok kerülése**: working-state legyen per-request, timeouttal és connection close reset-tel. (Ref: `compeng/knowledge/gotchas/unbounded-message-capture-timeout-risk.md` — a lényeg: legyenek cap-ek és reset ágak.)
-- **Secure gateway exposure**: a UX változtatás nem nyúljon a hálózati beállításhoz; marad a `wss://...` serve setup. (Ref: `compeng/knowledge/patterns/secure-gateway-exposure-via-tailscale-serve.md`)
+- **Unbounded / beragadó állapotok kerülése**: working-state legyen per-request, timeouttal és connection close reset-tel. (Ref: `.github/compeng/knowledge/gotchas/unbounded-message-capture-timeout-risk.md` — a lényeg: legyenek cap-ek és reset ágak.)
+- **Secure gateway exposure**: a UX változtatás nem nyúljon a hálózati beállításhoz; marad a `wss://...` serve setup. (Ref: `.github/compeng/knowledge/patterns/secure-gateway-exposure-via-tailscale-serve.md`)
 
 ## 2) Scope
 

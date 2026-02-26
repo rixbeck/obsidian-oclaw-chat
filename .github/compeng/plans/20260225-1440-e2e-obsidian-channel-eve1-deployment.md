@@ -7,7 +7,7 @@ created: 2026-02-25 14:40
 estimated_hours: 4-6
 issue: inline
 related:
-  - compeng/plans/20260225-0954-hybrid-obsidian-integration.md
+  - .github/compeng/plans/20260225-0954-hybrid-obsidian-integration.md
   - workspace:/compeng/plans/20260225-1048-supervising-obsidian-oclaw-chat.md
   - workspace:/compeng/plans/20260218-1635-eve-bootstrap-plan-v1.md
 ---
@@ -429,7 +429,7 @@ rm -rf ~/.obsidian/vaults/openclaw-test-vault/.obsidian/plugins/obsidian-opencla
 
 ## 9) Known Issues / Gotchas
 
-### From compeng/knowledge/gotchas/
+### From .github/compeng/knowledge/gotchas/
 
 **Referenced:**
 - `openclaw-plugin-cannot-import-internals.md` — Channel plugin uses runtime APIs, not internal imports ✅ (already implemented)
@@ -478,7 +478,7 @@ rm -rf ~/.obsidian/vaults/openclaw-test-vault/.obsidian/plugins/obsidian-opencla
 - ✅ All 6 acceptance criteria pass
 - ✅ Run log created: `.github/compeng/runs/20260225-HHMM-e2e-eve1-deployment.md`
 - ✅ No critical bugs found → ready for Phase 3 (streaming, @mentions)
-- ✅ Gotchas documented (if any) → `compeng/knowledge/gotchas/`
+- ✅ Gotchas documented (if any) → `.github/compeng/knowledge/gotchas/`
 
 **Ready for checkpoint merge to master:** Yes (after successful E2E)
 

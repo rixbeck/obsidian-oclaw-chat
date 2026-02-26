@@ -3,7 +3,7 @@ status: done
 repo: rixbeck/obsidian-oclaw-chat
 branch: develop
 started: 2026-02-26 00:02 Europe/Budapest
-plan: compeng/plans/20260225-2353-agent-working-progress-indicator.md
+plan: .github/compeng/plans/20260225-2353-agent-working-progress-indicator.md
 ---
 
 # Run — Obsidian client progress indicator (“agent is working”)

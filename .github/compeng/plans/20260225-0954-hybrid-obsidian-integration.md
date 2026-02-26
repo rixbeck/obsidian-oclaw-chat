@@ -92,9 +92,9 @@ estimated_hours: 20-28
 
 ### 4.3 Hard rule-ok (knowledge alkalmazása)
 - **Nem importálunk OpenClaw core belső modulokat** (ERR_PACKAGE_PATH_NOT_EXPORTED).
-  - Ref: `compeng/knowledge/gotchas/openclaw-plugin-cannot-import-internals.md`
+  - Ref: `.github/compeng/knowledge/gotchas/openclaw-plugin-cannot-import-internals.md`
 - Preferált: publikus WS/RPC + saját vékony validáció.
-  - Ref: `compeng/knowledge/patterns/openclaw-plugin-development-sources.md`
+  - Ref: `.github/compeng/knowledge/patterns/openclaw-plugin-development-sources.md`
 
 ---
 
@@ -148,7 +148,7 @@ estimated_hours: 20-28
 - Integration: end-to-end chat flow + agent-initiated push.
 - Security: token redaction, no secrets in logs.
 
-Ref: `compeng/knowledge/checklists/tests.md`
+Ref: `.github/compeng/knowledge/checklists/tests.md`
 
 ---
 

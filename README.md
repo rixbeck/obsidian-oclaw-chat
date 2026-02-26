@@ -32,8 +32,8 @@ Use **Tailscale Serve** (TLS termination) instead of direct plaintext `ws://<tai
 - E2E deployment plan: `.github/compeng/plans/20260225-1440-e2e-obsidian-channel-eve1-deployment.md`
 - Run log: `.github/compeng/runs/20260225-1459-e2e-deployment-progress.md`
 - Reviews:
-  - `compeng/reviews/20260225-2146-obsidian-oclaw-chat.md`
-  - `compeng/reviews/20260225-2336-obsidian-oclaw-chat-followup.md`
+  - `.github/compeng/reviews/20260225-2146-obsidian-oclaw-chat.md`
+  - `.github/compeng/reviews/20260225-2336-obsidian-oclaw-chat-followup.md`
 
 ## License
 

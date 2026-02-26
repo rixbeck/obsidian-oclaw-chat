@@ -17,7 +17,7 @@ notes:
 
 ## Scope / summary
 
-This review follows the earlier report (`compeng/reviews/20260225-2146-obsidian-oclaw-chat.md`) and incorporates the additional findings from the final “make it work securely on tailnet” steps:
+This review follows the earlier report (`.github/compeng/reviews/20260225-2146-obsidian-oclaw-chat.md`) and incorporates the additional findings from the final “make it work securely on tailnet” steps:
 
 - Gateway exposure mode matters: direct `ws://<tailnet-ip>:18789` vs **Tailscale Serve** exposing `wss://<host>.tailnet` (portless).
 - Local gateway configuration ended up using **loopback + tailscale serve**, which is the correct trade-off for UI/TUI and Obsidian client.
