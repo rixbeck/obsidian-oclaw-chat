@@ -53,4 +53,17 @@ export class ChatManager {
       timestamp: Date.now(),
     };
   }
+
+  static createSessionDivider(sessionKey: string): ChatMessage {
+    const short = sessionKey.length > 28 ? `${sessionKey.slice(0, 12)}…${sessionKey.slice(-12)}` : sessionKey;
+    return {
+      id: `div-${Date.now()}`,
+      role: 'system',
+      level: 'info',
+      kind: 'session-divider',
+      title: sessionKey,
+      content: `[Session: ${short}]`,
+      timestamp: Date.now(),
+    };
+  }
 }

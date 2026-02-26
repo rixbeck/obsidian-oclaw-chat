@@ -53,6 +53,45 @@
   cursor: pointer;
 }
 
+/* Session picker */
+.oclaw-session-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.oclaw-session-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.oclaw-session-select {
+  flex: 1;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 4px 6px;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+
+.oclaw-session-btn {
+  padding: 4px 8px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+
+.oclaw-session-btn:hover {
+  background: var(--background-secondary-alt);
+}
+
 /* Messages area */
 .oclaw-messages {
   flex: 1;
@@ -127,6 +166,29 @@
   font-size: var(--font-ui-smaller);
   max-width: 100%;
   text-align: center;
+}
+
+/* Session divider (inserted on session switch) */
+.oclaw-message.system.oclaw-session-divider {
+  background: transparent;
+  padding: 6px 8px;
+}
+
+.oclaw-message.system.oclaw-session-divider .oclaw-message-body {
+  font-size: 0.85em;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.oclaw-message.system.oclaw-session-divider .oclaw-message-body::before,
+.oclaw-message.system.oclaw-session-divider .oclaw-message-body::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--background-modifier-border), transparent);
 }
 
 /* Message timestamp */

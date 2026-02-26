@@ -26,6 +26,10 @@ export class OpenClawChatView extends ItemView {
   private includeNoteCheckbox!: HTMLInputElement;
   private statusDot!: HTMLElement;
 
+  private sessionSelect!: HTMLSelectElement;
+  private sessionRefreshBtn!: HTMLButtonElement;
+  private sessionNewBtn!: HTMLButtonElement;
+
   private onMessagesClick: ((ev: MouseEvent) => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: OpenClawPlugin) {
@@ -103,6 +107,9 @@ export class OpenClawChatView extends ItemView {
     this._updateSendButton();
 
     this._renderMessages(this.chatManager.getMessages());
+
+    // Session dropdown population is best-effort.
+    void this._refreshSessions();
   }
 
   async onClose(): Promise<void> {
@@ -129,6 +136,22 @@ export class OpenClawChatView extends ItemView {
     header.createSpan({ cls: 'oclaw-header-title', text: 'OpenClaw Chat' });
     this.statusDot = header.createDiv({ cls: 'oclaw-status-dot' });
     this.statusDot.title = 'Gateway: disconnected';
+
+    // ── Session row ──
+    const sessRow = root.createDiv({ cls: 'oclaw-session-row' });
+    sessRow.createSpan({ cls: 'oclaw-session-label', text: 'Session' });
+
+    this.sessionSelect = sessRow.createEl('select', { cls: 'oclaw-session-select' });
+    this.sessionRefreshBtn = sessRow.createEl('button', { cls: 'oclaw-session-btn', text: 'Refresh' });
+    this.sessionNewBtn = sessRow.createEl('button', { cls: 'oclaw-session-btn', text: 'New…' });
+
+    this.sessionRefreshBtn.addEventListener('click', () => void this._refreshSessions());
+    this.sessionNewBtn.addEventListener('click', () => void this._promptNewSession());
+    this.sessionSelect.addEventListener('change', () => {
+      const next = this.sessionSelect.value;
+      if (!next || next === this.plugin.settings.sessionKey) return;
+      void this.plugin.switchSession(next);
+    });
 
     // ── Messages area ──
     this.messagesEl = root.createDiv({ cls: 'oclaw-messages' });
@@ -169,6 +192,59 @@ export class OpenClawChatView extends ItemView {
     });
   }
 
+  private _setSessionSelectOptions(keys: string[]): void {
+    this.sessionSelect.empty();
+
+    const current = this.plugin.settings.sessionKey;
+    const unique = Array.from(new Set([current, ...keys].filter(Boolean)));
+
+    for (const key of unique) {
+      const opt = this.sessionSelect.createEl('option', { value: key, text: key });
+      if (key === current) opt.selected = true;
+    }
+
+    this.sessionSelect.title = current;
+  }
+
+  private async _refreshSessions(): Promise<void> {
+    // Always show at least the current session.
+    if (!this.sessionSelect) return;
+
+    if (this.plugin.wsClient.state !== 'connected') {
+      this._setSessionSelectOptions([]);
+      return;
+    }
+
+    try {
+      const res = await this.plugin.wsClient.listSessions({
+        activeMinutes: 60 * 24,
+        limit: 100,
+        includeGlobal: false,
+        includeUnknown: false,
+      });
+
+      const rows = Array.isArray(res?.sessions) ? res.sessions : [];
+      const obsidianOnly = rows.filter((r) => r && (r.channel === 'obsidian' || String(r.key).includes(':obsidian:')));
+      const keys = (obsidianOnly.length ? obsidianOnly : rows).map((r) => r.key).filter(Boolean);
+      this._setSessionSelectOptions(keys);
+    } catch (err) {
+      console.error('[oclaw] sessions.list failed', err);
+      // Keep current option only.
+      this._setSessionSelectOptions([]);
+    }
+  }
+
+  private async _promptNewSession(): Promise<void> {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const suggested = `obsidian-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const next = window.prompt('New session key', suggested);
+    if (!next) return;
+    await this.plugin.switchSession(next);
+    // Update dropdown selection best-effort.
+    this._setSessionSelectOptions([]);
+  }
+
   // ── Message rendering ─────────────────────────────────────────────────────
 
   private _renderMessages(messages: readonly ChatMessage[]): void {
@@ -196,8 +272,12 @@ export class OpenClawChatView extends ItemView {
     this.messagesEl.querySelector('.oclaw-placeholder')?.remove();
 
     const levelClass = msg.level ? ` ${msg.level}` : '';
-    const el = this.messagesEl.createDiv({ cls: `oclaw-message ${msg.role}${levelClass}` });
+    const kindClass = msg.kind ? ` oclaw-${msg.kind}` : '';
+    const el = this.messagesEl.createDiv({ cls: `oclaw-message ${msg.role}${levelClass}${kindClass}` });
     const body = el.createDiv({ cls: 'oclaw-message-body' });
+    if (msg.title) {
+      body.title = msg.title;
+    }
 
     // Treat assistant output as UNTRUSTED by default.
     // Rendering as Obsidian Markdown can trigger embeds and other plugins' post-processors.

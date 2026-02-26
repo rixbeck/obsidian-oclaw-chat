@@ -10,6 +10,37 @@ export default class OpenClawPlugin extends Plugin {
   wsClient!: ObsidianWSClient;
   chatManager!: ChatManager;
 
+  async switchSession(sessionKey: string): Promise<void> {
+    const next = sessionKey.trim();
+    if (!next) {
+      new Notice('OpenClaw Chat: session key cannot be empty.');
+      return;
+    }
+
+    // Abort any in-flight run best-effort (avoid leaking a "working" UI state).
+    try {
+      await this.wsClient.abortActiveRun();
+    } catch {
+      // ignore
+    }
+
+    // Insert divider at the start of the new session.
+    this.chatManager.addMessage(ChatManager.createSessionDivider(next));
+
+    this.settings.sessionKey = next;
+    await this.saveSettings();
+
+    // Reconnect with the new session key.
+    this.wsClient.disconnect();
+    this.wsClient.setSessionKey(next);
+
+    if (this.settings.authToken) {
+      this.wsClient.connect(this.settings.gatewayUrl, this.settings.authToken, {
+        allowInsecureWs: this.settings.allowInsecureWs,
+      });
+    }
+  }
+
   async onload(): Promise<void> {
     await this.loadSettings();
 
