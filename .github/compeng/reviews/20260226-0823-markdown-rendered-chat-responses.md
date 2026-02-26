@@ -55,6 +55,10 @@ A megoldás várhatóan javítja a UX-et (listák, code blockok, kiemelés), és
    - üzenet elemhez egy `data-msg-id`, és render előtt ellenőrizni, hogy az elem még a DOM-ban van.
    - vagy `await`-tel sorosítani (ha nem okoz UI lagot) — de ez átvezetés a callback láncon.
 
+## Compound artifacts created
+- Pattern: `.github/compeng/knowledge/patterns/obsidian-chat-render-assistant-markdown.md`
+- Gotcha: `.github/compeng/knowledge/gotchas/obsidian-markdown-render-embeds-and-race.md`
+
 ## Nice-to-have
 
 1) **Settings toggle**
