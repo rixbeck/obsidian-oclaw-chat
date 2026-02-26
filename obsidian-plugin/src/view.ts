@@ -198,7 +198,7 @@ export class OpenClawChatView extends ItemView {
     this.wsClient.disconnect();
 
     if (this.onMessagesClick) {
-      this.messagesEl?.removeEventListener('click', this.onMessagesClick);
+      this.messagesEl?.removeEventListener('click', this.onMessagesClick, true);
       this.onMessagesClick = null;
     }
   }
@@ -504,14 +504,21 @@ export class OpenClawChatView extends ItemView {
       // Obsidian internal-link often uses vault-relative path.
       const vaultPath = raw.replace(/^\/+/, '');
       const f = this.app.vault.getAbstractFileByPath(vaultPath);
-      if (!(f instanceof TFile)) return;
 
       ev.preventDefault();
       ev.stopPropagation();
-      void this.app.workspace.getLeaf(true).openFile(f);
+
+      if (f instanceof TFile) {
+        void this.app.workspace.getLeaf(true).openFile(f);
+        return;
+      }
+
+      // Fallback: let Obsidian resolve linktext (best-effort).
+      void this.app.workspace.openLinkText(vaultPath, this.app.workspace.getActiveFile()?.path ?? '', true);
     };
 
-    this.messagesEl.addEventListener('click', this.onMessagesClick);
+    // Use capture to ensure we catch clicks even if Obsidian/default handlers stop propagation.
+    this.messagesEl.addEventListener('click', this.onMessagesClick, true);
   }
 
   private _tryMapVaultRelativeToken(token: string, mappings: PathMapping[]): string | null {
