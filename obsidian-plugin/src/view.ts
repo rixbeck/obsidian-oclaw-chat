@@ -287,9 +287,14 @@ export class OpenClawChatView extends ItemView {
     const suggested = `obsidian-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
 
     const modal = new NewSessionModal(this, suggested, (value) => {
-      void this.plugin.switchSession(value);
-      // Update dropdown selection best-effort.
-      this._setSessionSelectOptions([]);
+      const v = value.trim();
+      if (!v) return;
+      void (async () => {
+        await this.plugin.switchSession(v);
+        await this._refreshSessions();
+        this.sessionSelect.value = v;
+        this.sessionSelect.title = v;
+      })();
     });
     modal.open();
   }
