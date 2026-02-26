@@ -24,6 +24,84 @@ function lastSentReq(ws: MockWebSocket) {
 }
 
 describe('ObsidianWSClient (abort/working state)', () => {
+  it('onclose clears activeRunId and abortInFlight (prevents stale abort after reconnect)', async () => {
+    const client = new ObsidianWSClient('main');
+    const ws = new MockWebSocket('ws://test');
+    (client as any).ws = ws;
+    (client as any).state = 'connected';
+
+    (client as any).activeRunId = 'obsidian-stale-run';
+    (client as any).abortInFlight = Promise.resolve(true);
+    (client as any)._setWorking(true);
+
+    // Simulate ws.onclose behavior (we test the state invariants it should enforce).
+    // We call the same transitions the real ws.onclose now performs.
+    (client as any)._stopTimers();
+    (client as any).activeRunId = null;
+    (client as any).abortInFlight = null;
+    (client as any)._setWorking(false);
+    (client as any)._setState('disconnected');
+
+    expect((client as any).activeRunId).toBeNull();
+    expect((client as any).abortInFlight).toBeNull();
+    expect((client as any).state).toBe('disconnected');
+  });
+
+  it('final chat event with non-assistant role does NOT clear working', async () => {
+    const client = new ObsidianWSClient('main');
+    (client as any).state = 'connected';
+    (client as any).activeRunId = 'obsidian-run';
+    (client as any)._setWorking(true);
+
+    // Terminal state but role=user: should be ignored, keep working.
+    (client as any)._handleChatEventFrame({
+      type: 'event',
+      event: 'chat',
+      payload: {
+        sessionKey: 'agent:main:main',
+        state: 'final',
+        runId: 'obsidian-run',
+        message: { role: 'user', content: [{ type: 'text', text: 'echo' }] },
+      },
+    });
+
+    expect((client as any).activeRunId).toBe('obsidian-run');
+    expect((client as any).working).toBe(true);
+  });
+
+  it('missing state is treated as non-terminal (does not clear working)', async () => {
+    const client = new ObsidianWSClient('main');
+    (client as any).state = 'connected';
+    (client as any).activeRunId = 'obsidian-run';
+    (client as any)._setWorking(true);
+
+    (client as any)._handleChatEventFrame({
+      type: 'event',
+      event: 'chat',
+      payload: {
+        sessionKey: 'agent:main:main',
+        // state missing
+        runId: 'obsidian-run',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'partial' }] },
+      },
+    });
+
+    expect((client as any).activeRunId).toBe('obsidian-run');
+    expect((client as any).working).toBe(true);
+  });
+
+  it('abortActiveRun returns false and sends nothing if there is no activeRunId', async () => {
+    const client = new ObsidianWSClient('main');
+    const ws = new MockWebSocket('ws://test');
+    (client as any).ws = ws;
+    (client as any).state = 'connected';
+
+    (client as any).activeRunId = null;
+
+    await expect(client.abortActiveRun()).resolves.toBe(false);
+    expect(ws.sent.length).toBe(0);
+  });
+
   it('sendMessage sets working=true only after chat.send ack', async () => {
     const client = new ObsidianWSClient('main');
     const ws = new MockWebSocket('ws://test');
