@@ -27,7 +27,7 @@ class NewSessionModal extends Modal {
 
     new Setting(contentEl)
       .setName('Session key')
-      .setDesc('Tip: keep it Obsidian-specific (e.g. obsidian-YYYYMMDD-HHMM).')
+      .setDesc('Tip: choose a short suffix; it will become agent:main:obsidian:direct:<vaultHash>-<suffix>.')
       .addText((t) => {
         t.setValue(value);
         t.onChange((v) => {
@@ -44,9 +44,13 @@ class NewSessionModal extends Modal {
         b.setCta();
         b.setButtonText('Create');
         b.onClick(() => {
-          const v = value.trim();
-          if (!v.startsWith('obsidian-')) {
-            new Notice('Session key must start with "obsidian-"');
+          const v = value.trim().toLowerCase();
+          if (!v) {
+            new Notice('Suffix cannot be empty');
+            return;
+          }
+          if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(v)) {
+            new Notice('Use letters/numbers/_/- only (max 64 chars)');
             return;
           }
           this.onSubmit(v);
@@ -159,8 +163,8 @@ export class OpenClawChatView extends ItemView {
 
     this._renderMessages(this.chatManager.getMessages());
 
-    // Session dropdown population is best-effort.
-    void this._refreshSessions();
+    // Load session dropdown from local vault-scoped known sessions.
+    this._loadKnownSessions();
   }
 
   async onClose(): Promise<void> {
@@ -193,16 +197,16 @@ export class OpenClawChatView extends ItemView {
     sessRow.createSpan({ cls: 'oclaw-session-label', text: 'Session' });
 
     this.sessionSelect = sessRow.createEl('select', { cls: 'oclaw-session-select' });
-    this.sessionRefreshBtn = sessRow.createEl('button', { cls: 'oclaw-session-btn', text: 'Refresh' });
+    this.sessionRefreshBtn = sessRow.createEl('button', { cls: 'oclaw-session-btn', text: 'Reload' });
     this.sessionNewBtn = sessRow.createEl('button', { cls: 'oclaw-session-btn', text: 'New…' });
     this.sessionMainBtn = sessRow.createEl('button', { cls: 'oclaw-session-btn', text: 'Main' });
 
-    this.sessionRefreshBtn.addEventListener('click', () => void this._refreshSessions());
+    this.sessionRefreshBtn.addEventListener('click', () => this._loadKnownSessions());
     this.sessionNewBtn.addEventListener('click', () => void this._promptNewSession());
     this.sessionMainBtn.addEventListener('click', () => {
       void (async () => {
         await this.plugin.switchSession('main');
-        await this._refreshSessions();
+        this._loadKnownSessions();
         this.sessionSelect.value = 'main';
         this.sessionSelect.title = 'main';
       })();
@@ -213,7 +217,7 @@ export class OpenClawChatView extends ItemView {
       if (!next || next === this.plugin.settings.sessionKey) return;
       void (async () => {
         await this.plugin.switchSession(next);
-        await this._refreshSessions();
+        this._loadKnownSessions();
         this.sessionSelect.value = next;
         this.sessionSelect.title = next;
       })();
@@ -263,15 +267,12 @@ export class OpenClawChatView extends ItemView {
     try {
       this.sessionSelect.empty();
 
-      const current = this.plugin.settings.sessionKey;
-      const recent = Array.isArray(this.plugin.settings.recentSessionKeys) ? this.plugin.settings.recentSessionKeys : [];
+      const current = (this.plugin.settings.sessionKey ?? 'main').toLowerCase();
+      let unique = Array.from(new Set([current, ...keys].filter(Boolean)));
 
-      const allowed = (k: string) => k === 'main' || k.startsWith('obsidian-') || k.includes(':obsidian:');
+      // Canonical-only: main or agent:main:obsidian:direct:*
+      unique = unique.filter((k) => k === 'main' || String(k).startsWith('agent:main:obsidian:direct:'));
 
-      let unique = Array.from(new Set([current, ...recent, ...keys].filter(Boolean)));
-      unique = unique.filter((k) => allowed(String(k)));
-
-      // If we have no Obsidian sessions at all, ensure "main" is present as a safe baseline.
       if (unique.length === 0) {
         unique = ['main'];
       }
@@ -281,7 +282,6 @@ export class OpenClawChatView extends ItemView {
         if (key === current) opt.selected = true;
       }
 
-      // Force select to current after rebuilding options (avoid UI drifting to a stale value).
       if (unique.includes(current)) {
         this.sessionSelect.value = current;
       }
@@ -291,54 +291,30 @@ export class OpenClawChatView extends ItemView {
     }
   }
 
-  private async _refreshSessions(): Promise<void> {
-    // Always show at least the current session.
-    if (!this.sessionSelect) return;
-
-    if (this.plugin.wsClient.state !== 'connected') {
-      this._setSessionSelectOptions([]);
-      return;
-    }
-
-    try {
-      const res = await this.plugin.wsClient.listSessions({
-        // Do NOT filter by activity: we want stable access to older obsidian-* sessions.
-        activeMinutes: 0,
-        limit: 200,
-        includeGlobal: false,
-        includeUnknown: true,
-      });
-
-      const rows = Array.isArray(res?.sessions) ? res.sessions : [];
-      const obsidianOnly = rows.filter((r) => {
-        if (!r) return false;
-        const key = String(r.key || '');
-        // Our plugin-created sessions are typically simple keys like "obsidian-YYYYMMDD-HHMM".
-        if (key.startsWith('obsidian-')) return true;
-        return r.channel === 'obsidian' || key.includes(':obsidian:');
-      });
-      const keys = obsidianOnly.map((r) => r.key).filter(Boolean);
-      this._setSessionSelectOptions(keys);
-    } catch (err) {
-      console.error('[oclaw] sessions.list failed', err);
-      // Keep current option only.
-      this._setSessionSelectOptions([]);
-    }
+  private _loadKnownSessions(): void {
+    const vaultHash = (this.plugin.settings.vaultHash ?? '').trim();
+    const map = this.plugin.settings.knownSessionKeysByVault ?? {};
+    const keys = vaultHash && Array.isArray(map[vaultHash]) ? map[vaultHash] : [];
+    this._setSessionSelectOptions(keys);
   }
 
   private async _promptNewSession(): Promise<void> {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
-    const suggested = `obsidian-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const suggested = `chat-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
 
-    const modal = new NewSessionModal(this, suggested, (value) => {
-      const v = value.trim();
-      if (!v) return;
+    const modal = new NewSessionModal(this, suggested, (suffix) => {
+      const vaultHash = (this.plugin.settings.vaultHash ?? '').trim();
+      if (!vaultHash) {
+        new Notice('OpenClaw Chat: cannot create session (missing vault identity).');
+        return;
+      }
+      const key = `agent:main:obsidian:direct:${vaultHash}-${suffix}`;
       void (async () => {
-        await this.plugin.switchSession(v);
-        await this._refreshSessions();
-        this.sessionSelect.value = v;
-        this.sessionSelect.title = v;
+        await this.plugin.switchSession(key);
+        this._loadKnownSessions();
+        this.sessionSelect.value = key;
+        this.sessionSelect.title = key;
       })();
     });
     modal.open();

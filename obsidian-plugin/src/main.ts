@@ -1,4 +1,4 @@
-import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
+import { FileSystemAdapter, Notice, Plugin, WorkspaceLeaf } from 'obsidian';
 import { OpenClawSettingTab } from './settings';
 import { ObsidianWSClient } from './websocket';
 import { ChatManager } from './chat';
@@ -10,10 +10,42 @@ export default class OpenClawPlugin extends Plugin {
   wsClient!: ObsidianWSClient;
   chatManager!: ChatManager;
 
+  private _vaultHash: string | null = null;
+
+  private _computeVaultHash(): string | null {
+    try {
+      const adapter = this.app.vault.adapter;
+      // Desktop only: FileSystemAdapter provides a stable base path.
+      if (adapter instanceof FileSystemAdapter) {
+        const basePath = adapter.getBasePath();
+        if (basePath) {
+          // Use Node crypto (Electron environment).
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const crypto = require('crypto') as typeof import('crypto');
+          const hex = crypto.createHash('sha256').update(basePath, 'utf8').digest('hex');
+          return hex.slice(0, 16);
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  }
+
+  private _canonicalVaultSessionKey(vaultHash: string): string {
+    return `agent:main:obsidian:direct:${vaultHash}`;
+  }
+
   async switchSession(sessionKey: string): Promise<void> {
-    const next = sessionKey.trim();
+    const next = sessionKey.trim().toLowerCase();
     if (!next) {
       new Notice('OpenClaw Chat: session key cannot be empty.');
+      return;
+    }
+
+    // Safety: only allow main or canonical obsidian direct sessions.
+    if (!(next === 'main' || next.startsWith('agent:main:obsidian:direct:'))) {
+      new Notice('OpenClaw Chat: only main or agent:main:obsidian:direct:* sessions are allowed.');
       return;
     }
 
@@ -27,11 +59,17 @@ export default class OpenClawPlugin extends Plugin {
     // Insert divider at the start of the new session.
     this.chatManager.addMessage(ChatManager.createSessionDivider(next));
 
-    // Persist + remember as a recent Obsidian session key.
     this.settings.sessionKey = next;
-    const recent = Array.isArray(this.settings.recentSessionKeys) ? this.settings.recentSessionKeys : [];
-    const nextRecent = [next, ...recent.filter((k) => k && k !== next)].slice(0, 20);
-    this.settings.recentSessionKeys = nextRecent;
+
+    // Track known sessions per vault (vault-scoped).
+    if (this._vaultHash) {
+      const map = this.settings.knownSessionKeysByVault ?? {};
+      const cur = Array.isArray(map[this._vaultHash]) ? map[this._vaultHash] : [];
+      const nextList = [next, ...cur.filter((k) => k && k !== next)].slice(0, 20);
+      map[this._vaultHash] = nextList;
+      this.settings.knownSessionKeysByVault = map;
+    }
+
     await this.saveSettings();
 
     // Reconnect with the new session key.
@@ -48,7 +86,37 @@ export default class OpenClawPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    this.wsClient = new ObsidianWSClient(this.settings.sessionKey, {
+    // Compute vault hash (desktop) and migrate to canonical obsidian direct session key.
+    this._vaultHash = this._computeVaultHash();
+    if (this._vaultHash) {
+      this.settings.vaultHash = this._vaultHash;
+
+      const canonical = this._canonicalVaultSessionKey(this._vaultHash);
+      const existing = (this.settings.sessionKey ?? '').trim().toLowerCase();
+      const isLegacy = existing.startsWith('obsidian-');
+      const isEmptyOrMain = !existing || existing === 'main' || existing === 'agent:main:main';
+
+      // Remember legacy keys for debugging/migration, but default to canonical.
+      if (isLegacy) {
+        const legacy = Array.isArray(this.settings.legacySessionKeys) ? this.settings.legacySessionKeys : [];
+        this.settings.legacySessionKeys = [existing, ...legacy.filter((k) => k && k !== existing)].slice(0, 20);
+      }
+
+      if (isLegacy || isEmptyOrMain) {
+        this.settings.sessionKey = canonical;
+      }
+
+      const map = this.settings.knownSessionKeysByVault ?? {};
+      const cur = Array.isArray(map[this._vaultHash]) ? map[this._vaultHash] : [];
+      if (!cur.includes(canonical)) {
+        map[this._vaultHash] = [canonical, ...cur].slice(0, 20);
+        this.settings.knownSessionKeysByVault = map;
+      }
+
+      await this.saveSettings();
+    }
+
+    this.wsClient = new ObsidianWSClient((this.settings.sessionKey ?? 'main').toLowerCase(), {
       identityStore: {
         get: async () => (await this._loadDeviceIdentity()),
         set: async (identity) => await this._saveDeviceIdentity(identity),

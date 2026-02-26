@@ -18,8 +18,14 @@ export interface OpenClawSettings {
   /** Optional: map remote FS paths / exported paths back to vault-relative paths */
   pathMappings: PathMapping[];
 
-  /** Recent session keys (used to keep a stable Obsidian-only session picker). */
-  recentSessionKeys: string[];
+  /** Vault identity (hash) used for canonical session keys. */
+  vaultHash?: string;
+
+  /** Known Obsidian session keys for each vaultHash (vault-scoped continuity). */
+  knownSessionKeysByVault?: Record<string, string[]>;
+
+  /** Legacy keys kept for migration/debug (optional). */
+  legacySessionKeys?: string[];
 }
 
 export type PathMapping = {
@@ -38,7 +44,9 @@ export const DEFAULT_SETTINGS: OpenClawSettings = {
   renderAssistantMarkdown: false,
   allowInsecureWs: false,
   pathMappings: [],
-  recentSessionKeys: [],
+  vaultHash: undefined,
+  knownSessionKeysByVault: {},
+  legacySessionKeys: [],
 };
 
 /** A single chat message */
@@ -54,26 +62,6 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
 }
-
-/** Gateway sessions.list types (minimal subset we use in UI). */
-export type GatewaySessionRow = {
-  key: string;
-  kind?: string;
-  label?: string;
-  displayName?: string;
-  derivedTitle?: string;
-  lastMessagePreview?: string;
-  channel?: string;
-  updatedAt?: number | null;
-  lastAccountId?: string;
-};
-
-export type SessionsListResult = {
-  ts: number;
-  path: string;
-  count: number;
-  sessions: GatewaySessionRow[];
-};
 
 /** Payload for messages SENT to the server (outbound) */
 export interface WSPayload {

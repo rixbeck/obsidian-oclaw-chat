@@ -13,7 +13,7 @@
  * - Receive: event "chat" (filter by sessionKey)
  */
 
-import type { InboundWSPayload, SessionsListResult } from './types';
+import type { InboundWSPayload } from './types';
 
 function isLocalHost(host: string): boolean {
   const h = host.toLowerCase();
@@ -342,26 +342,7 @@ export class ObsidianWSClient {
     this._setWorking(false);
   }
 
-  async listSessions(opts?: {
-    activeMinutes?: number;
-    limit?: number;
-    includeGlobal?: boolean;
-    includeUnknown?: boolean;
-  }): Promise<SessionsListResult> {
-    if (this.state !== 'connected') {
-      throw new Error('Not connected');
-    }
-
-    const params: Record<string, unknown> = {
-      includeGlobal: Boolean(opts?.includeGlobal ?? false),
-      includeUnknown: Boolean(opts?.includeUnknown ?? false),
-    };
-    if (opts?.activeMinutes && opts.activeMinutes > 0) params.activeMinutes = opts.activeMinutes;
-    if (opts?.limit && opts.limit > 0) params.limit = opts.limit;
-
-    const res = await this._sendRequest('sessions.list', params);
-    return res as SessionsListResult;
-  }
+  // NOTE: canonical Obsidian session keys do not require gateway sessions.list for core UX.
 
   async sendMessage(message: string): Promise<void> {
     if (this.state !== 'connected') {
