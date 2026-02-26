@@ -489,6 +489,8 @@ export class OpenClawChatView extends ItemView {
   private _installInternalLinkDelegation(): void {
     if (this.onMessagesClick || this.onDocClickCapture) return;
 
+    const OCLAW_OPEN = 'oclaw-open:';
+
     const handler = (ev: MouseEvent) => {
       const target = ev.target as HTMLElement | null;
       if (!target) return;
@@ -496,11 +498,34 @@ export class OpenClawChatView extends ItemView {
       // Only handle clicks originating from within our messages container.
       if (!this.messagesEl?.contains(target)) return;
 
-      const a = target.closest?.('a.internal-link') as HTMLAnchorElement | null;
+      const a = target.closest?.('a.internal-link, a[href^="oclaw-open:"]') as HTMLAnchorElement | null;
       if (!a) return;
 
-      const dataHref = a.getAttribute('data-href') || '';
       const hrefAttr = a.getAttribute('href') || '';
+      if (hrefAttr.startsWith(OCLAW_OPEN)) {
+        const encoded = hrefAttr.slice(OCLAW_OPEN.length);
+        let vaultPath = '';
+        try {
+          vaultPath = decodeURIComponent(encoded);
+        } catch {
+          vaultPath = encoded;
+        }
+        vaultPath = vaultPath.replace(/^\/+/, '');
+
+        ev.preventDefault();
+        ev.stopPropagation();
+
+        const f = this.app.vault.getAbstractFileByPath(vaultPath);
+        if (f instanceof TFile) {
+          void this.app.workspace.getLeaf(true).openFile(f);
+          return;
+        }
+        void this.app.workspace.openLinkText(vaultPath, this.app.workspace.getActiveFile()?.path ?? '', true);
+        return;
+      }
+
+      // Obsidian-generated internal link
+      const dataHref = a.getAttribute('data-href') || '';
       const raw = (dataHref || hrefAttr).trim();
       if (!raw) return;
 
@@ -555,46 +580,61 @@ export class OpenClawChatView extends ItemView {
   }
 
   private _preprocessAssistantMarkdown(text: string, mappings: PathMapping[]): string {
-    const candidates = extractCandidates(text);
-    if (candidates.length === 0) return text;
+    // In Markdown mode we still treat assistant output as untrusted.
+    // We do NOT rely on Obsidian's internal-link navigation; instead we emit markdown links
+    // with a custom scheme that our click delegation handles.
+    const OCLAW_OPEN = 'oclaw-open:';
+
+    const toOpenLink = (display: string, vaultPath: string) => {
+      const safePath = vaultPath.replace(/^\/+/, '');
+      return `[${display}](${OCLAW_OPEN}${encodeURIComponent(safePath)})`;
+    };
+
+    const tryResolveVaultPath = (raw: string): string | null => {
+      const direct = this._tryMapVaultRelativeToken(raw, mappings);
+      if (direct) return direct;
+      const mapped = tryMapRemotePathToVaultPath(raw, mappings);
+      if (mapped && this.app.vault.getAbstractFileByPath(mapped)) return mapped;
+      // URL reverse-map
+      const fromUrl = this._tryReverseMapUrlToVaultPath(raw, mappings);
+      if (fromUrl && this.app.vault.getAbstractFileByPath(fromUrl)) return fromUrl;
+      return null;
+    };
+
+    // Unwrap wikilinks ONLY when the inner target is a recognizable, existing/mapped vault path.
+    // Otherwise keep as-is (user may have valid wiki links unrelated to our mapping).
+    let normalized = text.replace(/\[\[([^\]]+)\]\]/g, (full, inner) => {
+      const resolved = tryResolveVaultPath(String(inner));
+      if (!resolved) return full;
+      return toOpenLink(String(inner), resolved);
+    });
+
+    const candidates = extractCandidates(normalized);
+    if (candidates.length === 0) return normalized;
 
     let out = '';
     let cursor = 0;
 
     for (const c of candidates) {
-      out += text.slice(cursor, c.start);
+      out += normalized.slice(cursor, c.start);
       cursor = c.end;
 
       if (c.kind === 'url') {
-        // URLs remain URLs UNLESS we can safely map to an existing vault file.
         const mapped = this._tryReverseMapUrlToVaultPath(c.raw, mappings);
-        out += mapped ? `[[${mapped}]]` : c.raw;
+        out += mapped && this.app.vault.getAbstractFileByPath(mapped) ? toOpenLink(c.raw, mapped) : c.raw;
         continue;
       }
 
-      // 1) If the token is already a vault-relative path (or can be resolved via vaultBase heuristic), linkify it directly.
-      const direct = this._tryMapVaultRelativeToken(c.raw, mappings);
-      if (direct) {
-        out += `[[${direct}]]`;
-        continue;
-      }
-
-      // 2) Else: try remote→vault mapping.
-      const mapped = tryMapRemotePathToVaultPath(c.raw, mappings);
-      if (!mapped) {
+      const resolved = tryResolveVaultPath(c.raw);
+      if (!resolved) {
         out += c.raw;
         continue;
       }
 
-      if (!this.app.vault.getAbstractFileByPath(mapped)) {
-        out += c.raw;
-        continue;
-      }
-
-      out += `[[${mapped}]]`;
+      out += toOpenLink(c.raw, resolved);
     }
 
-    out += text.slice(cursor);
+    out += normalized.slice(cursor);
     return out;
   }
 
