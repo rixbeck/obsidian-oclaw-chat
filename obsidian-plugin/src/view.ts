@@ -454,6 +454,19 @@ export class OpenClawChatView extends ItemView {
       body.setText(msg.content);
     }
 
+    // Auto-dismiss transient system messages (but keep session dividers).
+    if (msg.role === 'system' && msg.kind !== 'session-divider') {
+      const FADE_DELAY_MS = 5_000;
+      const FADE_ANIM_MS = 450;
+
+      window.setTimeout(() => {
+        el.addClass('oclaw-fade-out');
+        window.setTimeout(() => {
+          this.chatManager.removeMessage(msg.id);
+        }, FADE_ANIM_MS);
+      }, FADE_DELAY_MS);
+    }
+
     // Scroll to bottom
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }

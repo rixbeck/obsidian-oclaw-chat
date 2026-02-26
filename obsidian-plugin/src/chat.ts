@@ -23,6 +23,13 @@ export class ChatManager {
     this.onUpdate?.([]);
   }
 
+  removeMessage(id: string): void {
+    const idx = this.messages.findIndex((m) => m.id === id);
+    if (idx < 0) return;
+    this.messages.splice(idx, 1);
+    this.onUpdate?.(this.messages);
+  }
+
   /** Create a user message object (without adding it) */
   static createUserMessage(content: string): ChatMessage {
     return {

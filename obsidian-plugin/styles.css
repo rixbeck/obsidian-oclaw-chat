@@ -314,3 +314,10 @@
   color: var(--text-on-accent);
   border-left: 3px solid var(--color-red);
 }
+
+/* Auto-dismiss animation */
+.oclaw-message.oclaw-fade-out {
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 450ms ease, transform 450ms ease;
+}
