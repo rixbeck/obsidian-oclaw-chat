@@ -44,6 +44,43 @@ const WORKING_MAX_MS = 120_000;
 /** Max inbound frame size to parse (DoS guard) */
 const MAX_INBOUND_FRAME_BYTES = 512 * 1024;
 
+function byteLengthUtf8(text: string): number {
+  return utf8Bytes(text).byteLength;
+}
+
+async function normalizeWsDataToText(data: any): Promise<{ ok: true; text: string; bytes: number } | { ok: false; reason: string; bytes?: number }> {
+  if (typeof data === 'string') {
+    const bytes = byteLengthUtf8(data);
+    return { ok: true, text: data, bytes };
+  }
+
+  // Browser WebSocket can deliver Blob
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    const bytes = data.size;
+    if (bytes > MAX_INBOUND_FRAME_BYTES) return { ok: false, reason: 'too-large', bytes };
+    const text = await data.text();
+    // Blob.size is bytes already; no need to re-measure.
+    return { ok: true, text, bytes };
+  }
+
+  if (data instanceof ArrayBuffer) {
+    const bytes = data.byteLength;
+    if (bytes > MAX_INBOUND_FRAME_BYTES) return { ok: false, reason: 'too-large', bytes };
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(data));
+    return { ok: true, text, bytes };
+  }
+
+  // Some runtimes could pass Uint8Array directly
+  if (data instanceof Uint8Array) {
+    const bytes = data.byteLength;
+    if (bytes > MAX_INBOUND_FRAME_BYTES) return { ok: false, reason: 'too-large', bytes };
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(data);
+    return { ok: true, text, bytes };
+  }
+
+  return { ok: false, reason: 'unsupported-type' };
+}
+
 /** Max in-flight requests before fast-failing (DoS/robustness guard) */
 const MAX_PENDING_REQUESTS = 200;
 
@@ -443,47 +480,68 @@ export class ObsidianWSClient {
     };
 
     ws.onmessage = (event: MessageEvent) => {
-      // DoS guard: refuse huge frames.
-      if (typeof event.data === 'string' && event.data.length > MAX_INBOUND_FRAME_BYTES) {
-        console.error('[oclaw-ws] Inbound frame too large; closing connection');
-        ws.close();
-        return;
-      }
-
-      let frame: any;
-      try {
-        frame = JSON.parse(event.data as string);
-      } catch {
-        console.error('[oclaw-ws] Failed to parse incoming message');
-        return;
-      }
-
-      // Responses
-      if (frame.type === 'res') {
-        this._handleResponseFrame(frame);
-        return;
-      }
-
-      // Events
-      if (frame.type === 'event') {
-        if (frame.event === 'connect.challenge') {
-          connectNonce = frame.payload?.nonce || null;
-          // Attempt handshake once we have a nonce.
-          void tryConnect();
+      // WebSocket onmessage cannot be async, but we can run an async task inside.
+      void (async () => {
+        const normalized = await normalizeWsDataToText(event.data);
+        if (!normalized.ok) {
+          if (normalized.reason === 'too-large') {
+            console.error('[oclaw-ws] Inbound frame too large; closing connection');
+            ws.close();
+          } else {
+            console.error('[oclaw-ws] Unsupported inbound frame type; ignoring');
+          }
           return;
         }
 
-        if (frame.event === 'chat') {
-          this._handleChatEventFrame(frame);
+        if (normalized.bytes > MAX_INBOUND_FRAME_BYTES) {
+          console.error('[oclaw-ws] Inbound frame too large; closing connection');
+          ws.close();
+          return;
         }
-        return;
-      }
 
-      // Avoid logging full frames (may include message content or other sensitive payloads).
-      console.debug('[oclaw-ws] Unhandled frame', { type: frame?.type, event: frame?.event, id: frame?.id });
+        let frame: any;
+        try {
+          frame = JSON.parse(normalized.text);
+        } catch {
+          console.error('[oclaw-ws] Failed to parse incoming message');
+          return;
+        }
+
+        // Responses
+        if (frame.type === 'res') {
+          this._handleResponseFrame(frame);
+          return;
+        }
+
+        // Events
+        if (frame.type === 'event') {
+          if (frame.event === 'connect.challenge') {
+            connectNonce = frame.payload?.nonce || null;
+            // Attempt handshake once we have a nonce.
+            void tryConnect();
+            return;
+          }
+
+          if (frame.event === 'chat') {
+            this._handleChatEventFrame(frame);
+          }
+          return;
+        }
+
+        // Avoid logging full frames (may include message content or other sensitive payloads).
+        console.debug('[oclaw-ws] Unhandled frame', { type: frame?.type, event: frame?.event, id: frame?.id });
+      })();
+    };
+
+    const clearHandshakeTimer = () => {
+      if (handshakeTimer) {
+        clearTimeout(handshakeTimer);
+        handshakeTimer = null;
+      }
     };
 
     ws.onclose = () => {
+      clearHandshakeTimer();
       this._stopTimers();
       this.activeRunId = null;
       this.abortInFlight = null;
@@ -502,6 +560,7 @@ export class ObsidianWSClient {
     };
 
     ws.onerror = (ev: Event) => {
+      clearHandshakeTimer();
       console.error('[oclaw-ws] WebSocket error', ev);
     };
   }
