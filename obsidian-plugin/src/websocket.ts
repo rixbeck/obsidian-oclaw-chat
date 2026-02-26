@@ -117,7 +117,7 @@ function buildDeviceAuthPayload(params: {
   return base.join('|');
 }
 
-async function signDevicePayload(identity: DeviceIdentity, payload: string): Promise<{ signature: string; signedAt: number }> {
+async function signDevicePayload(identity: DeviceIdentity, payload: string): Promise<{ signature: string }> {
   const privateKey = await crypto.subtle.importKey(
     'jwk',
     identity.privateKeyJwk,
@@ -126,9 +126,8 @@ async function signDevicePayload(identity: DeviceIdentity, payload: string): Pro
     ['sign'],
   );
 
-  const signedAt = Date.now();
   const sig = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, utf8Bytes(payload) as unknown as BufferSource);
-  return { signature: base64UrlEncode(sig), signedAt };
+  return { signature: base64UrlEncode(sig) };
 }
 
 function extractTextFromGatewayMessage(msg: any): string {
@@ -200,6 +199,7 @@ export class ObsidianWSClient {
     this.intentionalClose = true;
     this._stopTimers();
     this.activeRunId = null;
+    this.abortInFlight = null;
     this._setWorking(false);
     if (this.ws) {
       this.ws.close();
@@ -216,14 +216,16 @@ export class ObsidianWSClient {
     const runId = `obsidian-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
     // Show “working” ONLY after the gateway acknowledges the request.
-    await this._sendRequest('chat.send', {
+    const ack = await this._sendRequest('chat.send', {
       sessionKey: this.sessionKey,
       message,
       idempotencyKey: runId,
       // deliver defaults to true in gateway; keep default
     });
 
-    this.activeRunId = runId;
+    // If the gateway returns a canonical run identifier, prefer it.
+    const canonicalRunId = String(ack?.runId || ack?.idempotencyKey || '');
+    this.activeRunId = canonicalRunId || runId;
     this._setWorking(true);
     this._armWorkingSafetyTimeout();
   }
@@ -240,10 +242,13 @@ export class ObsidianWSClient {
     }
 
     const runId = this.activeRunId;
+    if (!runId) {
+      return false;
+    }
 
     this.abortInFlight = (async () => {
       try {
-        await this._sendRequest('chat.abort', runId ? { sessionKey: this.sessionKey, runId } : { sessionKey: this.sessionKey });
+        await this._sendRequest('chat.abort', { sessionKey: this.sessionKey, runId });
         return true;
       } catch (err) {
         console.error('[oclaw-ws] chat.abort failed', err);
@@ -369,6 +374,8 @@ export class ObsidianWSClient {
 
     ws.onclose = () => {
       this._stopTimers();
+      this.activeRunId = null;
+      this.abortInFlight = null;
       this._setWorking(false);
       this._setState('disconnected');
 
@@ -413,8 +420,12 @@ export class ObsidianWSClient {
       return;
     }
 
-    // Avoid double-render: gateway emits delta + final + aborted. Render only final/aborted.
-    if (payload?.state && payload.state !== 'final' && payload.state !== 'aborted') {
+    // Avoid double-render: gateway emits delta + final + aborted. Render only explicit final/aborted.
+    // If state is missing, treat as non-terminal (do not clear UI / do not render).
+    if (!payload?.state) {
+      return;
+    }
+    if (payload.state !== 'final' && payload.state !== 'aborted') {
       return;
     }
 
@@ -422,19 +433,21 @@ export class ObsidianWSClient {
     const msg = payload?.message;
     const role = msg?.role ?? 'assistant';
 
-    // Both final and aborted resolve "working".
-    this.activeRunId = null;
-    this._setWorking(false);
-
-    // Aborted may have no assistant message or may carry partial assistant content.
-    if (payload?.state === 'aborted') {
-      // If there's no usable assistant payload, just don't append anything.
-      // (View layer may optionally add a system message on successful stop.)
+    // Aborted ends the run regardless of role/message.
+    if (payload.state === 'aborted') {
+      this.activeRunId = null;
+      this._setWorking(false);
+      // Aborted may have no assistant message; if none, stop here.
       if (!msg) return;
+      // If there is a message, only append assistant output.
+      if (role !== 'assistant') return;
     }
 
-    if (role !== 'assistant') {
-      return;
+    // Final should only complete the run when the assistant completes.
+    if (payload.state === 'final') {
+      if (role !== 'assistant') return;
+      this.activeRunId = null;
+      this._setWorking(false);
     }
 
     const text = extractTextFromGatewayMessage(msg);
@@ -496,12 +509,19 @@ export class ObsidianWSClient {
     }, RECONNECT_DELAY_MS);
   }
 
+  private lastBufferedWarnAtMs = 0;
+
   private _startHeartbeat(): void {
     this._stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       if (this.ws?.readyState !== WebSocket.OPEN) return;
       if (this.ws.bufferedAmount > 0) {
-        console.warn('[oclaw-ws] Send buffer not empty — connection may be stalled');
+        const now = Date.now();
+        // Throttle to avoid log spam in long-running sessions.
+        if (now - this.lastBufferedWarnAtMs > 5 * 60_000) {
+          this.lastBufferedWarnAtMs = now;
+          console.warn('[oclaw-ws] Send buffer not empty — connection may be stalled');
+        }
       }
     }, HEARTBEAT_INTERVAL_MS);
   }

@@ -10,6 +10,8 @@ export interface OpenClawSettings {
   accountId: string;
   /** Whether to include the active note content with each message */
   includeActiveNote: boolean;
+  /** Render assistant output as Markdown (unsafe: may trigger embeds/post-processors); default OFF */
+  renderAssistantMarkdown: boolean;
 }
 
 export const DEFAULT_SETTINGS: OpenClawSettings = {
@@ -18,6 +20,7 @@ export const DEFAULT_SETTINGS: OpenClawSettings = {
   sessionKey: 'main',
   accountId: 'main',
   includeActiveNote: false,
+  renderAssistantMarkdown: false,
 };
 
 /** A single chat message */

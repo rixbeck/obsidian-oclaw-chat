@@ -80,6 +80,18 @@ export class OpenClawSettingTab extends PluginSettingTab {
         })
       );
 
+    new Setting(containerEl)
+      .setName('Render assistant as Markdown (unsafe)')
+      .setDesc(
+        'OFF recommended. If enabled, assistant output is rendered as Obsidian Markdown which may trigger embeds and other plugins\' post-processors.'
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.renderAssistantMarkdown).onChange(async (value) => {
+          this.plugin.settings.renderAssistantMarkdown = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
     containerEl.createEl('p', {
       text: 'Reconnect: close and reopen the sidebar after changing the gateway URL or token.',
       cls: 'setting-item-description',

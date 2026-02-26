@@ -155,8 +155,9 @@ export class OpenClawChatView extends ItemView {
     const el = this.messagesEl.createDiv({ cls: `oclaw-message ${msg.role}${levelClass}` });
     const body = el.createDiv({ cls: 'oclaw-message-body' });
 
-    // Render assistant messages as Markdown (untrusted content → keep user/system plain)
-    if (msg.role === 'assistant') {
+    // Treat assistant output as UNTRUSTED by default.
+    // Rendering as Obsidian Markdown can trigger embeds and other plugins' post-processors.
+    if (msg.role === 'assistant' && this.plugin.settings.renderAssistantMarkdown) {
       const sourcePath = this.app.workspace.getActiveFile()?.path ?? '';
       void MarkdownRenderer.renderMarkdown(msg.content, body, sourcePath, this.plugin);
     } else {
